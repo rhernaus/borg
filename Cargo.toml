@@ -1,0 +1,47 @@
+[package]
+name = "borg"
+version = "0.1.0"
+edition = "2021"
+description = "An autonomous self-improving AI agent implemented in Rust"
+authors = ["Your Name <your.email@example.com>"]
+readme = "README.md"
+
+[dependencies]
+# For async runtime
+tokio = { version = "1.30.0", features = ["full"] }
+# For HTTP requests to LLM APIs
+reqwest = { version = "0.11.20", features = ["json"] }
+# JSON serialization/deserialization
+serde = { version = "1.0.188", features = ["derive"] }
+serde_json = "1.0.107"
+# Git operations
+git2 = "0.17.2"
+pathdiff = "0.2.1"
+# System resource monitoring
+sysinfo = "0.29.8"
+# Logging
+log = "0.4.20"
+env_logger = "0.10.0"
+# CLI interface
+clap = { version = "4.4.2", features = ["derive"] }
+# Error handling
+anyhow = "1.0.75"
+thiserror = "1.0.48"
+# Configuration
+config = "0.13.3"
+toml = "0.8.0"
+# For async operations
+futures = "0.3.28"
+async-trait = "0.1.73"
+# Regular expressions
+regex = "1.9.5"
+# Date and time
+chrono = { version = "0.4.31", features = ["serde"] }
+# UUID generation
+uuid = { version = "1.4.1", features = ["v4"] }
+
+[dev-dependencies]
+# Testing framework
+proptest = "1.2.0"
+mockall = "0.11.4"
+tempfile = "3.8.0"

@@ -1,0 +1,11 @@
+---
+description: Documentation Updates
+globs: 
+alwaysApply: false
+---
+## Documentation Updates
+
+- After implementing any new feature, improvement, or fix, always update relevant sections of the project documentation.
+- Ensure the documentation clearly reflects current functionality, usage examples, and any configuration changes.
+- Include updates to README, API documentation, and inline code comments as appropriate.
+- Confirm that all documentation updates are committed together with the corresponding code changes.

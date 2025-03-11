@@ -1,0 +1,8 @@
+---
+description: Integrate Testing and Automation
+globs: 
+alwaysApply: false
+---
+## Testing and Automation
+- Write unit tests for all new functions using Jest.
+- Ensure all tests pass before committing code.

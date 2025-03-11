@@ -1,0 +1,8 @@
+---
+description: Enforce Consistent Naming and Formatting
+globs: 
+alwaysApply: false
+---
+## Naming and Formatting
+- Use camelCase for variable and function names.
+- Ensure all code adheres to the project's ESLint configuration.

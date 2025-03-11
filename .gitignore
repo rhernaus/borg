@@ -1,0 +1,29 @@
+# Generated files
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Workspace directory
+/workspace/
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment variables
+.env
+.env.local
+
+# Configuration with sensitive data
+config.production.toml
+config.toml           # Ignore the main config file with API keys
+*.local.toml          # Ignore any local config files
+
+# Logs
+*.log
+
+# OS specific files
+.DS_Store
+Thumbs.db

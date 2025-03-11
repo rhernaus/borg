@@ -1,0 +1,8 @@
+---
+description: Prioritize Type Safety
+globs: 
+alwaysApply: false
+---
+## Type Safety
+- Always use TypeScript for new modules.
+- Define explicit types for all function parameters and return values.

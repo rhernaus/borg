@@ -1,0 +1,63 @@
+# Borg Agent Configuration Template
+# Copy this file to config.toml and add your API keys
+
+# Default LLM configuration (used as fallback)
+[llm.default]
+provider = "openai"
+api_key = "your-openai-api-key-here"
+model = "gpt-4o"
+max_tokens = 2048
+temperature = 0.0
+
+# Code Generation LLM (specialized for writing high-quality code)
+[llm.code_generation]
+provider = "anthropic"
+api_key = "your-anthropic-api-key-here"
+model = "claude-3-7-sonnet-20250219"  # High-capability model for code
+max_tokens = 4096                     # Larger token limit for code generation
+temperature = 0.0                     # Lower temperature for more deterministic output
+
+# Ethical Assessment LLM (specialized for evaluating ethical implications)
+[llm.ethics]
+provider = "anthropic"
+api_key = "your-anthropic-api-key-here"
+model = "claude-3-7-opus-20240229"    # Most capable model for ethical reasoning
+max_tokens = 1024
+temperature = 0.0                     # Low temperature for consistent ethical judgments
+
+# Planning LLM (for goal selection and high-level planning)
+[llm.planning]
+provider = "anthropic"
+api_key = "your-anthropic-api-key-here"
+model = "claude-3-7-sonnet-20250219"
+max_tokens = 2048
+temperature = 0.5                     # Medium temperature for creative but coherent planning
+
+# Code Review LLM (for validating and reviewing code changes)
+[llm.code_review]
+provider = "anthropic"
+api_key = "your-anthropic-api-key-here"
+model = "claude-3-7-haiku-20250209"   # Faster model suitable for review tasks
+max_tokens = 1536
+temperature = 0.0                     # Lower temperature for consistent code reviews
+
+[agent]
+max_memory_usage_mb = 2048
+max_cpu_usage_percent = 80
+working_dir = "./workspace"
+timeout_seconds = 120
+testing_mode = false                  # When true, prevents recursive agent activation
+
+[git]
+repo_url = ""                         # Leave empty for local-only repository
+username = ""                         # Optional: For remote repository auth
+token = ""                            # Optional: For remote repository auth
+branch_prefix = "borg/improvement/"
+
+[testing]
+linting_enabled = true                # Enable code linting
+compilation_check = true              # Verify code compiles before merging
+run_unit_tests = true                 # Run unit tests on changes
+run_integration_tests = false         # Run integration tests (more time-consuming)
+performance_benchmarks = false        # Run performance benchmarks
+timeout_seconds = 300                 # Timeout for test execution

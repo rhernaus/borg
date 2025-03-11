@@ -1,0 +1,8 @@
+---
+description: Adhere to Security Best Practices
+globs: 
+alwaysApply: false
+---
+## Security
+- Sanitize all user inputs to prevent injection attacks.
+- Store sensitive information using environment variables.
