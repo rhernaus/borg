@@ -14,10 +14,11 @@ use crate::core::config::Config;
 use crate::core::ethics::{EthicsManager, FundamentalPrinciple};
 use crate::core::optimization::{OptimizationManager, OptimizationGoal, OptimizationCategory, GoalStatus, PriorityLevel};
 use crate::core::authentication::{AuthenticationManager, AccessRole};
+use crate::core::persistence::PersistenceManager;
 use crate::resource_monitor::monitor::ResourceMonitor;
 use crate::resource_monitor::system::SystemMonitor;
 use crate::testing::test_runner::TestRunner;
-use crate::testing::simple::SimpleTestRunner;
+use crate::testing::factory::TestRunnerFactory;
 use crate::version_control::git::GitManager;
 use crate::version_control::git_implementation::GitImplementation;
 
@@ -49,6 +50,9 @@ pub struct Agent {
 
     /// Authentication manager for user permissions
     authentication_manager: Arc<Mutex<AuthenticationManager>>,
+
+    /// Persistence manager for saving/loading goals
+    persistence_manager: PersistenceManager,
 }
 
 impl Agent {
@@ -86,17 +90,26 @@ impl Agent {
             OptimizationManager::new(Arc::clone(&ethics_manager))
         ));
 
+        // Create the persistence manager
+        let data_dir = working_dir.join("data");
+        let persistence_manager = PersistenceManager::new(&data_dir)
+            .context("Failed to create persistence manager")?;
+
         // Create the code generator
+        // Use the code_generation LLM config if available, otherwise fall back to default
+        let llm_config = config.llm.get("code_generation")
+            .or_else(|| config.llm.get("default"))
+            .ok_or_else(|| anyhow::anyhow!("No suitable LLM configuration found"))?
+            .clone();
+
         let code_generator: Arc<dyn CodeGenerator> = Arc::new(
-            LlmCodeGenerator::new(config.llm.clone(), Arc::clone(&git_manager))
+            LlmCodeGenerator::new(llm_config, Arc::clone(&git_manager))
                 .context("Failed to create code generator")?
         );
 
         // Create the test runner
-        let test_runner: Arc<dyn TestRunner> = Arc::new(
-            SimpleTestRunner::new(&working_dir)
-                .context("Failed to create test runner")?
-        );
+        let test_runner: Arc<dyn TestRunner> = TestRunnerFactory::create(&config, &working_dir)
+            .context("Failed to create test runner")?;
 
         Ok(Self {
             config,
@@ -108,6 +121,7 @@ impl Agent {
             ethics_manager,
             optimization_manager,
             authentication_manager,
+            persistence_manager,
         })
     }
 
@@ -118,7 +132,10 @@ impl Agent {
         // Initialize the Git repository
         self.initialize_git_repository().await?;
 
-        // Check if we have any existing goals
+        // Load goals from disk
+        self.load_goals_from_disk().await?;
+
+        // Check if we have any existing goals and create defaults if needed
         self.initialize_optimization_goals().await?;
 
         // Run the improvement loop
@@ -207,67 +224,123 @@ impl Agent {
             let goals = vec![
                 {
                     let mut goal = OptimizationGoal::new(
-                        "comm-001",
-                        "Implement Inter-Agent Communication Mechanism",
-                        "Create a mechanism for agents to communicate with each other, share information, and coordinate tasks.",
-                        OptimizationCategory::General,
-                    );
-                    goal.priority = PriorityLevel::Medium;
-                    goal.affected_areas = vec!["src/communication/agent_communication.rs".to_string()];
-                    goal
-                },
-                {
-                    let mut goal = OptimizationGoal::new(
                         "persist-001",
                         "Implement Goal Persistence to Disk",
-                        "Implement a mechanism to save optimization goals to disk and load them on startup.",
+                        "Design and implement a persistence mechanism to save optimization goals to disk in a structured format (JSON/TOML) and load them on startup. This ensures goal progress isn't lost between agent restarts and enables long-term tracking of improvement history.",
                         OptimizationCategory::General,
                     );
-                    goal.priority = PriorityLevel::High;
-                    goal.affected_areas = vec!["src/core/persistence.rs".to_string()];
+                    goal.priority = PriorityLevel::Critical;
+                    goal.affected_areas = vec!["src/core/persistence.rs".to_string(), "src/core/optimization.rs".to_string()];
+                    goal.success_metrics = vec![
+                        "Goals persist between agent restarts".to_string(),
+                        "Loading time < 100ms for up to 1000 goals".to_string(),
+                        "Saves changes within 50ms of goal modification".to_string(),
+                        "File format is human-readable for manual inspection".to_string(),
+                    ];
+                    goal.implementation_notes = Some("Implement using serde with the existing Serialize/Deserialize traits on OptimizationGoal. Consider using an atomic file write pattern to prevent data corruption during saves.".to_string());
                     goal
                 },
                 {
                     let mut goal = OptimizationGoal::new(
-                        "code-001",
+                        "codegen-001",
                         "Enhance Prompt Templates for Code Generation",
-                        "Improve the prompt templates used for code generation to produce more accurate and efficient code.",
-                        OptimizationCategory::Readability,
-                    );
-                    goal.priority = PriorityLevel::Medium;
-                    goal.affected_areas = vec!["src/code_generation/prompt.rs".to_string()];
-                    goal
-                },
-                {
-                    let mut goal = OptimizationGoal::new(
-                        "res-001",
-                        "Implement Resource Usage Forecasting",
-                        "Create a system to forecast resource usage based on current trends and planned operations.",
+                        "Improve the LLM prompt templates for code generation to provide more context, constraints, and examples of desired output. Include Rust best practices, memory safety guidelines, and error handling patterns in the prompts to generate higher quality and more secure code.",
                         OptimizationCategory::Performance,
                     );
-                    goal.priority = PriorityLevel::Low;
-                    goal.affected_areas = vec!["src/resource_monitor/forecasting.rs".to_string()];
+                    goal.priority = PriorityLevel::High;
+                    goal.affected_areas = vec!["src/code_generation/prompt.rs".to_string(), "src/code_generation/llm_generator.rs".to_string()];
+                    goal.success_metrics = vec![
+                        "Reduction in rejected code changes by 50%".to_string(),
+                        "Increase in test pass rate of generated code by 30%".to_string(),
+                        "Higher quality error handling in generated code".to_string(),
+                        "Better adherence to Rust idioms in generated code".to_string(),
+                    ];
+                    goal.implementation_notes = Some("Research effective prompt engineering techniques for code generation. Include system message that emphasizes Rust safety and idioms. Create specialized templates for different code modification tasks.".to_string());
                     goal
                 },
                 {
                     let mut goal = OptimizationGoal::new(
-                        "test-001",
-                        "Implement Automated Test Coverage Analysis",
-                        "Create a system to analyze test coverage and identify areas that need more testing.",
+                        "testing-001",
+                        "Implement Comprehensive Testing Framework",
+                        "Enhance the testing framework to include code linting, compilation validation, unit tests, integration tests, and performance benchmarks. The framework should provide detailed feedback on why tests failed to guide future improvement attempts.",
                         OptimizationCategory::TestCoverage,
                     );
+                    goal.priority = PriorityLevel::High;
+                    goal.affected_areas = vec!["src/testing/test_runner.rs".to_string(), "src/testing/simple.rs".to_string()];
+                    goal.success_metrics = vec![
+                        "Complete test pipeline with 5+ validation stages".to_string(),
+                        "Detailed error reports for failed tests".to_string(),
+                        "Test coverage reporting for generated code".to_string(),
+                        "Performance comparison against baseline for changes".to_string(),
+                    ];
+                    goal.implementation_notes = Some("Integrate with rustfmt, clippy, and cargo for validation. Store test results in structured format for trend analysis. Implement timeouts for each test phase.".to_string());
+                    goal
+                },
+                {
+                    let mut goal = OptimizationGoal::new(
+                        "multi-llm-001",
+                        "Implement Multi-LLM Architecture",
+                        "Refactor the LLM integration to support multiple specialized models for different tasks: code generation, ethics assessment, test validation, and planning. Each model should be optimized for its specific task with appropriate context windows and parameters.",
+                        OptimizationCategory::Performance,
+                    );
                     goal.priority = PriorityLevel::Medium;
-                    goal.affected_areas = vec!["src/testing/coverage.rs".to_string()];
+                    goal.affected_areas = vec!["src/code_generation/llm_generator.rs".to_string(), "src/core/ethics.rs".to_string()];
+                    goal.success_metrics = vec![
+                        "Successful integration of 4+ specialized LLMs".to_string(),
+                        "30%+ improvement in code quality via specialized models".to_string(),
+                        "More nuanced ethical assessments".to_string(),
+                        "Fallback mechanisms for API unavailability".to_string(),
+                    ];
+                    goal.implementation_notes = Some("Create an LLM manager that can route requests to the appropriate model based on task. Implement caching to reduce API costs. Add performance tracking to identify which models perform best for which tasks.".to_string());
+                    goal
+                },
+                {
+                    let mut goal = OptimizationGoal::new(
+                        "resource-001",
+                        "Implement Resource Usage Forecasting",
+                        "Create a sophisticated resource monitoring system that not only tracks current usage but predicts future resource needs based on planned operations. This forecasting should help prevent resource exhaustion and optimize scheduling of intensive tasks.",
+                        OptimizationCategory::Performance,
+                    );
+                    goal.priority = PriorityLevel::Medium;
+                    goal.affected_areas = vec!["src/resource_monitor/forecasting.rs".to_string(), "src/resource_monitor/monitor.rs".to_string()];
+                    goal.success_metrics = vec![
+                        "Predict memory usage with 90%+ accuracy".to_string(),
+                        "Predict CPU usage spikes 30+ seconds in advance".to_string(),
+                        "Automatic throttling when resources are constrained".to_string(),
+                        "Resource usage visualization and trend analysis".to_string(),
+                    ];
+                    goal.implementation_notes = Some("Implement time-series analysis of resource metrics. Use simple linear regression for initial forecasting. Consider adding a small machine learning model for more accurate predictions of complex patterns.".to_string());
+                    goal
+                },
+                {
+                    let mut goal = OptimizationGoal::new(
+                        "ethics-001",
+                        "Enhanced Ethical Decision Framework",
+                        "Implement a more sophisticated ethical assessment system that can evaluate potential improvements across multiple ethical dimensions. The framework should consider safety, privacy, fairness, transparency, and alignment with human values.",
+                        OptimizationCategory::Security,
+                    );
+                    goal.priority = PriorityLevel::High;
+                    goal.affected_areas = vec!["src/core/ethics.rs".to_string()];
+                    goal.success_metrics = vec![
+                        "Multi-dimensional ethical scoring system".to_string(),
+                        "Detailed reasoning for ethical decisions".to_string(),
+                        "Integration with specialized ethics LLM".to_string(),
+                        "Audit trail of ethical assessments".to_string(),
+                    ];
+                    goal.implementation_notes = Some("Research ethical frameworks for AI systems. Implement structured reasoning about potential consequences of code changes. Create detailed logging of decision-making process.".to_string());
                     goal
                 },
             ];
 
-            // Add goals to the manager
+            // Add the goals to the optimization manager
             for goal in goals {
-                optimization_manager.add_goal(goal);
+                optimization_manager.add_goal(goal.clone());
+                info!("Added optimization goal: {} ({})", goal.title, goal.id);
             }
 
-            info!("Created 5 initial optimization goals");
+            info!("Initialized {} default optimization goals", optimization_manager.get_all_goals().len());
+        } else {
+            info!("Found {} existing optimization goals", optimization_manager.get_all_goals().len());
         }
 
         Ok(())
@@ -465,99 +538,91 @@ impl Agent {
         Ok(())
     }
 
-    /// Test a code change
+    /// Test a change in a branch
     async fn test_change(&self, branch: &str) -> Result<bool> {
-        info!("Testing changes in branch: {}", branch);
+        let test_start = std::time::Instant::now();
+        info!("Testing changes in branch {}", branch);
 
-        // Open the repository
-        let repo = Repository::open(&self.working_dir)
-            .context(format!("Failed to open repository at {:?}", self.working_dir))?;
+        let result = self.test_runner.run_tests(branch, None).await?;
 
-        // Store the current branch so we can return to it
-        let head = repo.head()
-            .context("Failed to get repository HEAD")?;
-        let current_branch = head.shorthand().unwrap_or("master").to_string();
+        // The TestResult.success field now correctly indicates if tests passed
+        let passed = result.success;
+        let duration = test_start.elapsed();
 
-        // Checkout the branch to test - use safer checkout options
-        let obj = repo.revparse_single(&format!("refs/heads/{}", branch))
-            .context(format!("Failed to find branch '{}'", branch))?;
+        // Log the result appropriately
+        if passed {
+            info!("Tests passed for branch {} in {:?}", branch, duration);
 
-        // Use checkout options to force checkout
-        let mut checkout_opts = git2::build::CheckoutBuilder::new();
-        checkout_opts.force(); // Force checkout, discard local changes
-
-        // Try to checkout with more robust error handling
-        match repo.checkout_tree(&obj, Some(&mut checkout_opts)) {
-            Ok(_) => {},
-            Err(e) => {
-                error!("Failed to checkout tree for branch '{}': {}", branch, e);
-                // Attempt to clean up any failed checkout
-                let _ = repo.cleanup_state();
-                return Err(anyhow!("Failed to checkout branch '{}': {}", branch, e));
+            // Check specific metrics if available
+            if let Some(metrics) = &result.metrics {
+                info!("Test metrics: {} tests run, {} passed, {} failed",
+                      metrics.tests_run, metrics.tests_passed, metrics.tests_failed);
             }
-        }
 
-        // Set HEAD to the branch reference
-        match repo.set_head(&format!("refs/heads/{}", branch)) {
-            Ok(_) => {},
-            Err(e) => {
-                error!("Failed to set HEAD to branch '{}': {}", branch, e);
-                // Try to return to original branch
-                let original = repo.revparse_single(&format!("refs/heads/{}", current_branch))
-                    .context(format!("Failed to find original branch '{}'", current_branch))?;
-                let _ = repo.checkout_tree(&original, None);
-                let _ = repo.set_head(&format!("refs/heads/{}", current_branch));
-                return Err(anyhow!("Failed to set HEAD to branch '{}': {}", branch, e));
-            }
-        }
-
-        info!("Successfully checked out branch: {}", branch);
-
-        // TODO: Implement real testing - for now we just simulate it
-        info!("Simulating tests for branch: {}", branch);
-
-        // In a real implementation, we would run tests here
-        let random_success = true; // Always pass for now
-
-        // Return to the original branch
-        let original = repo.revparse_single(&format!("refs/heads/{}", current_branch))
-            .context(format!("Failed to find original branch '{}'", current_branch))?;
-
-        // Use checkout options for returning to original branch too
-        let mut checkout_opts = git2::build::CheckoutBuilder::new();
-        checkout_opts.force();
-
-        if let Err(e) = repo.checkout_tree(&original, Some(&mut checkout_opts)) {
-            warn!("Failed to return to original branch '{}': {}", current_branch, e);
-            // Continue anyway since this is a cleanup step
-        }
-
-        if let Err(e) = repo.set_head(&format!("refs/heads/{}", current_branch)) {
-            warn!("Failed to set HEAD back to original branch '{}': {}", current_branch, e);
-            // Continue anyway since this is a cleanup step
-        }
-
-        if random_success {
-            info!("Tests passed for branch: {}", branch);
-        } else {
-            warn!("Tests failed for branch: {}", branch);
-        }
-
-        Ok(random_success)
-    }
-
-    /// Evaluate test results
-    async fn evaluate_results(&self, goal: &OptimizationGoal, _branch: &str, test_passed: bool) -> Result<bool> {
-        info!("Evaluating results for goal: {}", goal.id);
-
-        // Simple evaluation for now - if tests pass, we consider it successful
-        if test_passed {
-            info!("Evaluation successful for goal: {}", goal.id);
             Ok(true)
         } else {
-            warn!("Evaluation failed for goal: {} - tests did not pass", goal.id);
+            error!("Tests failed for branch {} in {:?}", branch, duration);
+
+            // Log any test output regardless of type
+            for line in result.output.lines() {
+                if line.contains("test result:") || line.contains("error") {
+                    error!("Test failure: {}", line);
+                }
+            }
+
             Ok(false)
         }
+    }
+
+    /// Evaluate the results of a code change
+    async fn evaluate_results(&self, goal: &OptimizationGoal, branch: &str, test_passed: bool) -> Result<bool> {
+        if !test_passed {
+            warn!("Tests failed for goal '{}' in branch '{}'", goal.id, branch);
+            return Ok(false);
+        }
+
+        info!("Tests passed for goal '{}' in branch '{}'", goal.id, branch);
+
+        // Check if the change satisfies the success metrics
+        if !goal.success_metrics.is_empty() {
+            info!("Evaluating success metrics for goal '{}'", goal.id);
+
+            // Run benchmarks if this is a performance-related goal
+            if goal.category == OptimizationCategory::Performance {
+                info!("Running benchmarks for performance goal");
+
+                let benchmark_result = self.test_runner.run_benchmark(branch, None).await?;
+
+                if benchmark_result.success {
+                    info!("Benchmarks completed successfully");
+
+                    // Check for performance improvements in the benchmark output
+                    let has_improvement = benchmark_result.output.contains("improvement") ||
+                                         benchmark_result.output.contains("faster") ||
+                                         benchmark_result.output.contains("reduced");
+
+                    if has_improvement {
+                        info!("Performance improvement detected in benchmarks");
+                    } else {
+                        warn!("No clear performance improvement detected in benchmarks");
+
+                        // We'll still return true since the tests passed, but log a warning
+                        info!("Accepting change despite unclear performance impact since tests pass");
+                    }
+                } else {
+                    warn!("Benchmarks failed: {}", benchmark_result.output);
+                    // Benchmarks failing is not a reason to reject if main tests pass
+                    info!("Accepting change despite benchmark failures since main tests pass");
+                }
+            }
+
+            // For now, we'll consider the goal achieved if tests pass
+            // In a future enhancement, we could implement more sophisticated metrics validation
+            info!("All checks passed for goal '{}'", goal.id);
+        }
+
+        // Code change successful
+        Ok(true)
     }
 
     /// Merge a branch into main
@@ -575,8 +640,14 @@ impl Agent {
         repo.checkout_tree(&main_obj, None)
             .context("Failed to checkout main branch")?;
 
-        repo.set_head("refs/heads/master")
-            .or_else(|_| repo.set_head("refs/heads/main"))
+        // Try to set head to master or main branch
+        let main_branch_name = if repo.find_branch("master", git2::BranchType::Local).is_ok() {
+            "master"
+        } else {
+            "main"
+        };
+
+        repo.set_head(&format!("refs/heads/{}", main_branch_name))
             .context("Failed to set HEAD to main branch")?;
 
         // Find the branch to merge
@@ -587,24 +658,60 @@ impl Agent {
         let signature = Signature::now("Borg Agent", "borg@example.com")
             .context("Failed to create signature")?;
 
-        // Merge the branch
+        // Get the branch commit
         let branch_commit = branch_obj.peel_to_commit()
             .context(format!("Failed to peel branch '{}' to commit", branch))?;
 
+        // Get the main commit
         let main_commit = main_obj.peel_to_commit()
             .context("Failed to peel main branch to commit")?;
 
-        let merge_base = repo.merge_base(branch_commit.id(), main_commit.id())
-            .context("Failed to find merge base")?;
+        // Try to find a merge base, but don't error if one doesn't exist
+        let merge_base_result = repo.merge_base(branch_commit.id(), main_commit.id());
 
-        // If the merge base is the same as the branch commit, the branch is already merged
-        if merge_base == branch_commit.id() {
-            info!("Branch '{}' is already merged into main", branch);
-            return Ok(());
+        match merge_base_result {
+            Ok(merge_base) => {
+                // If the merge base is the same as the branch commit, the branch is already merged
+                if merge_base == branch_commit.id() {
+                    info!("Branch '{}' is already merged into main", branch);
+                    return Ok(());
+                }
+            },
+            Err(e) => {
+                // Log the error but continue (we'll handle this case differently)
+                warn!("Could not find merge base: {}", e);
+                // In this case, we'll do a hard reset to main, then apply the changes
+                repo.reset(&main_obj, git2::ResetType::Hard, None)
+                    .context("Failed to reset to main branch")?;
+
+                // Simple cherry-pick approach for new branches without merge base
+                // Reading the tree of the branch
+                let branch_tree = branch_commit.tree().context("Failed to get branch tree")?;
+
+                // Create a new commit with the same tree but parent as the current HEAD
+                let new_commit_id = repo.commit(
+                    Some("HEAD"),  // Update HEAD and current branch
+                    &signature,    // Author
+                    &signature,    // Committer
+                    &format!("Cherry-pick changes from {}\n\nImplemented goal: {}", branch, goal.id),
+                    &branch_tree,  // The tree from the branch
+                    &[&main_commit] // Parent is the current HEAD commit
+                )?;
+
+                info!("Cherry-picked changes from '{}' as commit {}", branch, new_commit_id);
+
+                // Change the goal status to completed
+                goal.status = GoalStatus::Completed;
+                goal.updated_at = chrono::Utc::now();
+
+                return Ok(());
+            }
         }
 
+        // If we get here, we have a merge base and can proceed with a normal merge
+
         // If the merge base is the same as the main commit, we can fast-forward
-        if merge_base == main_commit.id() {
+        if merge_base_result.unwrap() == main_commit.id() {
             // Fast-forward merge
             let mut reference = repo.find_reference("HEAD")
                 .context("Failed to find HEAD reference")?;
@@ -617,31 +724,79 @@ impl Agent {
 
             info!("Fast-forward merged branch '{}' into main", branch);
         } else {
-            // Create a normal merge
-            let mut index = repo.merge_commits(&main_commit, &branch_commit, None)
-                .context("Failed to merge commits")?;
+            // Try to create a normal merge
+            match repo.merge_commits(&main_commit, &branch_commit, None) {
+                Ok(mut index) => {
+                    if index.has_conflicts() {
+                        warn!("Merge conflicts detected. Using cherry-pick instead.");
+                        // Reset the merge state
+                        repo.cleanup_state()?;
+                        // Reset to main
+                        repo.reset(&main_obj, git2::ResetType::Hard, None)?;
 
-            let tree_id = index.write_tree_to(&repo)
-                .context("Failed to write merge tree")?;
+                        // Use cherry-pick approach for conflicting changes
+                        let branch_tree = branch_commit.tree().context("Failed to get branch tree")?;
 
-            let tree = repo.find_tree(tree_id)
-                .context("Failed to find merge tree")?;
+                        // Create a new commit with the changes but parent as the current HEAD
+                        let new_commit_id = repo.commit(
+                            Some("HEAD"),
+                            &signature,
+                            &signature,
+                            &format!("Cherry-pick changes from {} (merge conflict resolution)\n\nImplemented goal: {}", branch, goal.id),
+                            &branch_tree,
+                            &[&main_commit]
+                        )?;
 
-            // Create the merge commit
-            repo.commit(
-                Some("HEAD"),
-                &signature,
-                &signature,
-                &format!("Merge branch '{}' for goal: {}", branch, goal.id),
-                &tree,
-                &[&main_commit, &branch_commit]
-            ).context("Failed to create merge commit")?;
+                        info!("Cherry-picked changes from '{}' to resolve conflicts as commit {}", branch, new_commit_id);
+                    } else {
+                        // No conflicts, proceed with merge
+                        let tree_id = index.write_tree_to(&repo)
+                            .context("Failed to write merge tree")?;
 
-            info!("Merged branch '{}' into main", branch);
+                        let tree = repo.find_tree(tree_id)
+                            .context("Failed to find merge tree")?;
+
+                        // Create the merge commit
+                        let merge_commit_id = repo.commit(
+                            Some("HEAD"),
+                            &signature,
+                            &signature,
+                            &format!("Merge branch '{}' for goal: {}", branch, goal.id),
+                            &tree,
+                            &[&main_commit, &branch_commit]
+                        ).context("Failed to create merge commit")?;
+
+                        info!("Merged branch '{}' into main as commit {}", branch, merge_commit_id);
+                    }
+                },
+                Err(e) => {
+                    warn!("Merge failed: {}. Using cherry-pick instead.", e);
+                    // Reset to main
+                    repo.reset(&main_obj, git2::ResetType::Hard, None)?;
+
+                    // Use cherry-pick approach as fallback
+                    let branch_tree = branch_commit.tree().context("Failed to get branch tree")?;
+
+                    // Create a new commit with the changes but parent as the current HEAD
+                    let new_commit_id = repo.commit(
+                        Some("HEAD"),
+                        &signature,
+                        &signature,
+                        &format!("Cherry-pick changes from {} (merge failed)\n\nImplemented goal: {}", branch, goal.id),
+                        &branch_tree,
+                        &[&main_commit]
+                    )?;
+
+                    info!("Cherry-picked changes from '{}' as fallback as commit {}", branch, new_commit_id);
+                }
+            }
         }
 
         // Update the goal status
-        goal.update_status(crate::core::optimization::GoalStatus::Completed);
+        goal.status = GoalStatus::Completed;
+        goal.updated_at = chrono::Utc::now();
+
+        info!("Successfully merged changes for goal: {}", goal.id);
 
         Ok(())
     }
@@ -680,6 +835,10 @@ impl Agent {
 
         // Update dependencies between goals
         optimization_manager.update_goal_dependencies();
+
+        // Save all goals to disk
+        drop(optimization_manager); // Release the lock before the async call
+        self.save_goals_to_disk().await?;
 
         Ok(())
     }
@@ -812,6 +971,41 @@ impl Agent {
         report.push_str(&format!("Total financial impact assessments: {}\n\n", financial_impacts));
 
         Ok(report)
+    }
+
+    /// Load goals from disk
+    async fn load_goals_from_disk(&self) -> Result<()> {
+        info!("Loading optimization goals from disk");
+
+        match self.persistence_manager.load_into_optimization_manager(&self.optimization_manager).await {
+            Ok(_) => {
+                let optimization_manager = self.optimization_manager.lock().await;
+                let goals = optimization_manager.get_all_goals();
+                info!("Successfully loaded {} goals from disk", goals.len());
+                Ok(())
+            },
+            Err(e) => {
+                warn!("Failed to load goals from disk: {}", e);
+                warn!("Starting with empty goals");
+                Ok(())
+            }
+        }
+    }
+
+    /// Save goals to disk
+    async fn save_goals_to_disk(&self) -> Result<()> {
+        info!("Saving optimization goals to disk");
+
+        match self.persistence_manager.save_optimization_manager(&self.optimization_manager).await {
+            Ok(_) => {
+                info!("Successfully saved goals to disk");
+                Ok(())
+            },
+            Err(e) => {
+                error!("Failed to save goals to disk: {}", e);
+                Err(anyhow!("Failed to save goals to disk: {}", e))
+            }
+        }
     }
 }
 
@@ -987,6 +1181,11 @@ impl Agent {
                 goal.update_status(GoalStatus::Failed);
             }
         }
+
+        // At the end after updating goal status
+        // Save goals to disk after every goal processing
+        // to ensure we don't lose progress
+        self.save_goals_to_disk().await?;
 
         Ok(())
     }

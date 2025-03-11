@@ -4,3 +4,4 @@ pub mod error;
 pub mod ethics;
 pub mod optimization;
 pub mod authentication;
+pub mod persistence;

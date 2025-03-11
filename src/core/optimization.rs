@@ -267,6 +267,11 @@ impl OptimizationManager {
         &self.goals
     }
 
+    /// Clear all goals
+    pub fn clear_goals(&mut self) {
+        self.goals.clear();
+    }
+
     /// Get goals by status
     pub fn get_goals_by_status(&self, status: GoalStatus) -> Vec<&OptimizationGoal> {
         self.goals.iter().filter(|g| g.status == status).collect()

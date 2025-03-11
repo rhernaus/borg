@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use log::{info, error, debug};
+use serde::{Serialize, Deserialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -10,7 +11,7 @@ use tokio::time::timeout;
 use crate::core::error::BorgError;
 
 /// Result of running tests
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestResult {
     /// Whether the tests passed
     pub success: bool,
@@ -26,7 +27,7 @@ pub struct TestResult {
 }
 
 /// Metrics collected during a test run
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestMetrics {
     /// Number of tests run
     pub tests_run: usize,

@@ -12,103 +12,301 @@ impl PromptManager {
     pub fn new() -> Self {
         let mut templates = HashMap::new();
 
-        // Default improvement prompt
+        // System message for Rust code generation
+        templates.insert(
+            "system_message".to_string(),
+            r#"You are an expert Rust developer specializing in high-performance, memory-safe, and reliable code.
+Your code follows these principles:
+1. Memory safety - You leverage Rust's ownership system correctly, avoiding unsafe blocks unless absolutely necessary.
+2. Error handling - You use Result and Option types properly, with appropriate error propagation and handling.
+3. Performance - You understand zero-cost abstractions and write efficient code without unnecessary allocations.
+4. Readability - Your code is idiomatic Rust with clear naming conventions and appropriate documentation.
+5. Testability - You write code that is easy to test and include test examples where appropriate.
+
+When improving code, ensure that:
+- You maintain or improve thread safety where applicable
+- You use Result instead of panicking for recoverable errors
+- You leverage the type system to prevent errors at compile time
+- You follow the Rust API guidelines for public interfaces
+- You use appropriate lifetime annotations where needed
+- You handle all error cases explicitly
+
+Whenever possible, use Rust's standard library and well-established crates rather than reinventing functionality.
+"#.to_string(),
+        );
+
+        // Enhanced improvement prompt
         templates.insert(
             "improvement".to_string(),
             r#"
-            Your task is to improve the provided Rust code.
+## TASK DESCRIPTION:
+{{task}}
 
-            ## TASK DESCRIPTION:
-            {{task}}
+{{#if requirements}}
+## REQUIREMENTS:
+{{requirements}}
+{{/if}}
 
-            {{#if requirements}}
-            ## REQUIREMENTS:
-            {{requirements}}
-            {{/if}}
+## FILES TO MODIFY:
+{{file_paths}}
 
-            ## FILES TO MODIFY:
-            {{file_paths}}
+## CURRENT CODE:
+{{current_code}}
 
-            ## CURRENT CODE:
-            {{current_code}}
+{{#if previous_attempts}}
+## PREVIOUS ATTEMPTS THAT FAILED:
+{{#each previous_attempts}}
+### ATTEMPT:
+```rust
+{{this.code}}
+```
 
-            {{#if previous_attempts}}
-            ## PREVIOUS ATTEMPTS THAT FAILED:
-            {{#each previous_attempts}}
-            ### ATTEMPT:
-            ```rust
-            {{this.code}}
-            ```
+### FAILURE REASON:
+{{this.failure_reason}}
+{{/each}}
+{{/if}}
 
-            ### FAILURE REASON:
-            {{this.failure_reason}}
-            {{/each}}
-            {{/if}}
+## INSTRUCTIONS:
+1. Analyze the current code and understand its purpose
+2. Identify ways to improve the code based on the task description
+3. Create a modified version that addresses the requested improvements
+4. Provide a clear explanation of what you changed and why
+5. Ensure your solution follows Rust best practices
 
-            ## INSTRUCTIONS:
-            1. Analyze the current code and understand its purpose
-            2. Identify ways to improve the code based on the task description
-            3. Create a modified version that addresses the requested improvements
-            4. Provide a clear explanation of what you changed and why
-            5. Ensure your solution follows Rust best practices
+## RUST BEST PRACTICES TO APPLY:
+- Leverage Rust's ownership model for memory safety
+- Use Result<T, E> for recoverable errors, not unwrap() or expect() in production code
+- Implement appropriate traits (Debug, Clone, etc.) when needed
+- Use iterators and functional programming patterns when appropriate
+- Structure code in modules for proper organization
+- Use meaningful variable and function names that follow Rust conventions
+- Add appropriate documentation comments (///) for public APIs
+- Add unit tests for new functionality
+- Consider performance implications, especially for hot paths
+- Use appropriate lifetime annotations where needed
+- Ensure thread safety with proper use of Arc, Mutex, etc. where appropriate
 
-            ## EXPECTED OUTPUT FORMAT:
-            ```rust
-            // Modified code here
-            ```
+## EXPECTED OUTPUT FORMAT:
+For each file you modify, include the complete modified file in this format:
 
-            ## EXPLANATION:
-            Provide a clear explanation of your changes.
-            "#.to_string(),
+```rust
+// File: path/to/file.rs
+// Modified file content here
+```
+
+## EXPLANATION:
+After the code blocks, provide a detailed explanation of:
+1. What you changed
+2. Why you made these changes
+3. How your changes improve the code
+4. Any trade-offs or considerations for your implementation
+
+Be specific about memory safety, error handling, and performance implications.
+"#.to_string(),
         );
 
-        // Bug fix prompt
+        // Enhanced bug fix prompt
         templates.insert(
             "bugfix".to_string(),
             r#"
-            Your task is to fix a bug in the provided Rust code.
+## BUG DESCRIPTION:
+{{task}}
 
-            ## BUG DESCRIPTION:
-            {{task}}
+{{#if requirements}}
+## REQUIREMENTS:
+{{requirements}}
+{{/if}}
 
-            {{#if requirements}}
-            ## REQUIREMENTS:
-            {{requirements}}
-            {{/if}}
+## FILES TO MODIFY:
+{{file_paths}}
 
-            ## FILES TO MODIFY:
-            {{file_paths}}
+## CURRENT CODE:
+{{current_code}}
 
-            ## CURRENT CODE:
-            {{current_code}}
+{{#if previous_attempts}}
+## PREVIOUS ATTEMPTS THAT FAILED:
+{{#each previous_attempts}}
+### ATTEMPT:
+```rust
+{{this.code}}
+```
 
-            {{#if previous_attempts}}
-            ## PREVIOUS ATTEMPTS THAT FAILED:
-            {{#each previous_attempts}}
-            ### ATTEMPT:
-            ```rust
-            {{this.code}}
-            ```
+### FAILURE REASON:
+{{this.failure_reason}}
+{{/each}}
+{{/if}}
 
-            ### FAILURE REASON:
-            {{this.failure_reason}}
-            {{/each}}
-            {{/if}}
+## INSTRUCTIONS:
+1. Analyze the current code and identify the bug
+2. Fix the bug while minimizing changes to the code
+3. Provide a clear explanation of what was wrong and how you fixed it
+4. Ensure your solution follows Rust best practices
 
-            ## INSTRUCTIONS:
-            1. Analyze the current code and identify the bug
-            2. Fix the bug while minimizing changes to the code
-            3. Provide a clear explanation of what was wrong and how you fixed it
-            4. Ensure your solution follows Rust best practices
+## COMMON RUST BUGS TO CHECK FOR:
+- Ownership/borrowing issues (e.g., use of moved values, reference lifetimes)
+- Concurrency bugs (e.g., data races, deadlocks)
+- Improper error handling (e.g., swallowed errors, unwrapped Results/Options that can fail)
+- Type conversion issues (e.g., as casts that might panic)
+- Logic errors in dealing with Option/Result types
+- Resource leaks (e.g., unclosed files, connections)
+- Integer overflow/underflow
+- Off-by-one errors in ranges or indexing
+- Missing error propagation with `?` operator
+- Improper use of unsafe code
+- Infinite loops or recursion
 
-            ## EXPECTED OUTPUT FORMAT:
-            ```rust
-            // Fixed code here
-            ```
+## EXPECTED OUTPUT FORMAT:
+For each file you modify, include the complete modified file in this format:
 
-            ## EXPLANATION:
-            Provide a clear explanation of the bug and your fix.
-            "#.to_string(),
+```rust
+// File: path/to/file.rs
+// Modified file content here
+```
+
+## EXPLANATION:
+After the code blocks, provide a detailed explanation of:
+1. What the bug was
+2. Root cause analysis
+3. How your changes fix the issue
+4. How to prevent similar bugs in the future
+"#.to_string(),
+        );
+
+        // New feature implementation prompt
+        templates.insert(
+            "feature".to_string(),
+            r#"
+## FEATURE DESCRIPTION:
+{{task}}
+
+{{#if requirements}}
+## REQUIREMENTS:
+{{requirements}}
+{{/if}}
+
+## FILES TO MODIFY:
+{{file_paths}}
+
+## CURRENT CODE:
+{{current_code}}
+
+{{#if previous_attempts}}
+## PREVIOUS ATTEMPTS THAT FAILED:
+{{#each previous_attempts}}
+### ATTEMPT:
+```rust
+{{this.code}}
+```
+
+### FAILURE REASON:
+{{this.failure_reason}}
+{{/each}}
+{{/if}}
+
+## INSTRUCTIONS:
+1. Analyze the current codebase to understand the architecture
+2. Design and implement the new feature according to the description
+3. Ensure the implementation follows Rust best practices
+4. Maintain compatibility with the existing codebase
+5. Add appropriate error handling, documentation, and tests
+
+## IMPLEMENTATION GUIDELINES:
+- Follow existing patterns and coding style for consistency
+- Use traits for abstraction when appropriate
+- Implement proper error handling with custom error types if needed
+- Ensure thread safety if the feature might be used in concurrent contexts
+- Add appropriate logging at key points
+- Keep functions focused and modular
+- Consider performance implications, especially for operations that might scale
+- Add unit tests that cover happy path and error cases
+
+## EXPECTED OUTPUT FORMAT:
+For each file you modify, include the complete modified file in this format:
+
+```rust
+// File: path/to/file.rs
+// Modified file content here
+```
+
+For new files, include the complete file content in this format:
+
+```rust
+// File: path/to/new_file.rs
+// New file content here
+```
+
+## EXPLANATION:
+After the code blocks, provide a detailed explanation of:
+1. Your implementation approach
+2. Key design decisions and alternatives considered
+3. How your implementation satisfies the requirements
+4. Any areas that might need further refinement
+"#.to_string(),
+        );
+
+        // Refactoring prompt
+        templates.insert(
+            "refactor".to_string(),
+            r#"
+## REFACTORING TASK:
+{{task}}
+
+{{#if requirements}}
+## REQUIREMENTS:
+{{requirements}}
+{{/if}}
+
+## FILES TO MODIFY:
+{{file_paths}}
+
+## CURRENT CODE:
+{{current_code}}
+
+{{#if previous_attempts}}
+## PREVIOUS ATTEMPTS THAT FAILED:
+{{#each previous_attempts}}
+### ATTEMPT:
+```rust
+{{this.code}}
+```
+
+### FAILURE REASON:
+{{this.failure_reason}}
+{{/each}}
+{{/if}}
+
+## INSTRUCTIONS:
+1. Analyze the current code to understand its functionality
+2. Refactor the code while preserving its behavior
+3. Apply Rust best practices and improve code quality
+4. Ensure the refactored code is more maintainable, efficient, or readable
+
+## REFACTORING PRINCIPLES:
+- Extract reusable logic into functions or traits
+- Remove code duplication
+- Improve variable and function naming
+- Use appropriate Rust patterns (builder, visitor, etc.) when applicable
+- Replace imperative code with functional/iterator patterns where appropriate
+- Simplify complex logic
+- Improve error handling
+- Enhance documentation
+- Consider adding unit tests to verify behavior preservation
+
+## EXPECTED OUTPUT FORMAT:
+For each file you modify, include the complete modified file in this format:
+
+```rust
+// File: path/to/file.rs
+// Modified file content here
+```
+
+## EXPLANATION:
+After the code blocks, provide a detailed explanation of:
+1. What you refactored and why
+2. How your changes improve the code
+3. What code quality aspects have been enhanced
+4. Any performance or safety improvements
+"#.to_string(),
         );
 
         Self { templates }
@@ -117,9 +315,13 @@ impl PromptManager {
     /// Create a prompt for code improvement
     pub fn create_improvement_prompt(&self, context: &CodeContext, current_code: &str) -> String {
         let template = self.templates.get("improvement").unwrap();
+        let system_message = self.templates.get("system_message").unwrap();
+
+        // Combine system message and improvement template
+        let full_template = format!("{}\n\n{}", system_message, template);
 
         // Simple template substitution for now, would use a proper templating engine in a real implementation
-        let mut prompt = template.replace("{{task}}", &context.task);
+        let mut prompt = full_template.replace("{{task}}", &context.task);
 
         if let Some(requirements) = &context.requirements {
             prompt = prompt.replace("{{#if requirements}}", "");
@@ -161,11 +363,111 @@ impl PromptManager {
     /// Create a prompt for bug fixing
     pub fn create_bugfix_prompt(&self, context: &CodeContext, current_code: &str) -> String {
         let template = self.templates.get("bugfix").unwrap();
+        let system_message = self.templates.get("system_message").unwrap();
+
+        // Combine system message and bugfix template
+        let full_template = format!("{}\n\n{}", system_message, template);
 
         // Simple template substitution similar to the improvement prompt
-        let mut prompt = template.replace("{{task}}", &context.task);
+        let mut prompt = full_template.replace("{{task}}", &context.task);
 
         // Same substitution pattern as in create_improvement_prompt
+        if let Some(requirements) = &context.requirements {
+            prompt = prompt.replace("{{#if requirements}}", "");
+            prompt = prompt.replace("{{requirements}}", requirements);
+            prompt = prompt.replace("{{/if}}", "");
+        } else {
+            prompt = prompt.replace("{{#if requirements}}\n## REQUIREMENTS:\n{{requirements}}\n{{/if}}", "");
+        }
+
+        let file_paths = context.file_paths.join("\n");
+        prompt = prompt.replace("{{file_paths}}", &file_paths);
+
+        prompt = prompt.replace("{{current_code}}", current_code);
+
+        if !context.previous_attempts.is_empty() {
+            prompt = prompt.replace("{{#if previous_attempts}}", "");
+            prompt = prompt.replace("{{/if}}", "");
+
+            let mut attempts_text = String::new();
+
+            for attempt in &context.previous_attempts {
+                let attempt_template = "### ATTEMPT:\n```rust\n{{code}}\n```\n\n### FAILURE REASON:\n{{failure_reason}}";
+                let attempt_text = attempt_template
+                    .replace("{{code}}", &attempt.code)
+                    .replace("{{failure_reason}}", &attempt.failure_reason);
+
+                attempts_text.push_str(&attempt_text);
+                attempts_text.push_str("\n\n");
+            }
+
+            prompt = prompt.replace("{{#each previous_attempts}}\n### ATTEMPT:\n```rust\n{{this.code}}\n```\n\n### FAILURE REASON:\n{{this.failure_reason}}\n{{/each}}", &attempts_text);
+        } else {
+            prompt = prompt.replace("{{#if previous_attempts}}\n## PREVIOUS ATTEMPTS THAT FAILED:\n{{#each previous_attempts}}\n### ATTEMPT:\n```rust\n{{this.code}}\n```\n\n### FAILURE REASON:\n{{this.failure_reason}}\n{{/each}}\n{{/if}}", "");
+        }
+
+        prompt
+    }
+
+    /// Create a prompt for new feature implementation
+    pub fn create_feature_prompt(&self, context: &CodeContext, current_code: &str) -> String {
+        let template = self.templates.get("feature").unwrap();
+        let system_message = self.templates.get("system_message").unwrap();
+
+        // Combine system message and feature template
+        let full_template = format!("{}\n\n{}", system_message, template);
+
+        // Template substitution (similar pattern to other methods)
+        let mut prompt = full_template.replace("{{task}}", &context.task);
+
+        if let Some(requirements) = &context.requirements {
+            prompt = prompt.replace("{{#if requirements}}", "");
+            prompt = prompt.replace("{{requirements}}", requirements);
+            prompt = prompt.replace("{{/if}}", "");
+        } else {
+            prompt = prompt.replace("{{#if requirements}}\n## REQUIREMENTS:\n{{requirements}}\n{{/if}}", "");
+        }
+
+        let file_paths = context.file_paths.join("\n");
+        prompt = prompt.replace("{{file_paths}}", &file_paths);
+
+        prompt = prompt.replace("{{current_code}}", current_code);
+
+        if !context.previous_attempts.is_empty() {
+            prompt = prompt.replace("{{#if previous_attempts}}", "");
+            prompt = prompt.replace("{{/if}}", "");
+
+            let mut attempts_text = String::new();
+
+            for attempt in &context.previous_attempts {
+                let attempt_template = "### ATTEMPT:\n```rust\n{{code}}\n```\n\n### FAILURE REASON:\n{{failure_reason}}";
+                let attempt_text = attempt_template
+                    .replace("{{code}}", &attempt.code)
+                    .replace("{{failure_reason}}", &attempt.failure_reason);
+
+                attempts_text.push_str(&attempt_text);
+                attempts_text.push_str("\n\n");
+            }
+
+            prompt = prompt.replace("{{#each previous_attempts}}\n### ATTEMPT:\n```rust\n{{this.code}}\n```\n\n### FAILURE REASON:\n{{this.failure_reason}}\n{{/each}}", &attempts_text);
+        } else {
+            prompt = prompt.replace("{{#if previous_attempts}}\n## PREVIOUS ATTEMPTS THAT FAILED:\n{{#each previous_attempts}}\n### ATTEMPT:\n```rust\n{{this.code}}\n```\n\n### FAILURE REASON:\n{{this.failure_reason}}\n{{/each}}\n{{/if}}", "");
+        }
+
+        prompt
+    }
+
+    /// Create a prompt for code refactoring
+    pub fn create_refactor_prompt(&self, context: &CodeContext, current_code: &str) -> String {
+        let template = self.templates.get("refactor").unwrap();
+        let system_message = self.templates.get("system_message").unwrap();
+
+        // Combine system message and refactor template
+        let full_template = format!("{}\n\n{}", system_message, template);
+
+        // Template substitution (similar pattern to other methods)
+        let mut prompt = full_template.replace("{{task}}", &context.task);
+
         if let Some(requirements) = &context.requirements {
             prompt = prompt.replace("{{#if requirements}}", "");
             prompt = prompt.replace("{{requirements}}", requirements);

@@ -74,6 +74,18 @@ pub enum ErrorType {
     Other,
 }
 
+impl std::fmt::Display for ErrorType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ErrorType::CompileError => write!(f, "Compilation Error"),
+            ErrorType::RuntimeError => write!(f, "Runtime Error"),
+            ErrorType::TestFailure => write!(f, "Test Failure"),
+            ErrorType::Panic => write!(f, "Panic"),
+            ErrorType::Other => write!(f, "Other Error"),
+        }
+    }
+}
+
 /// Test result analyzer
 pub struct TestResultAnalyzer {
     /// Regular expressions for parsing errors
@@ -103,51 +115,61 @@ impl TestResultAnalyzer {
 
     /// Analyze a test result
     pub fn analyze(&self, result: &TestResult, baseline: Option<&TestResult>) -> TestAnalysis {
+        // Start with the success value from the test result
+        let success = result.success;
+
         let mut analysis = TestAnalysis {
-            success: result.success,
-            feedback: String::new(),
+            success,
+            feedback: if success {
+                "All tests passed successfully.".to_string()
+            } else {
+                "Tests failed.".to_string()
+            },
             errors: Vec::new(),
             complete: !result.output.contains("execution timed out"),
             performance_change: None,
         };
 
-        // Extract compilation errors
-        for cap in self.error_regex.captures_iter(&result.output) {
-            let error = TestError {
-                error_type: ErrorType::CompileError,
-                message: cap[2].to_string(),
-                file: Some(cap[3].trim().to_string()),
-                line: cap[4].parse().ok(),
-                column: cap[5].parse().ok(),
-            };
+        // Only look for errors if the result indicates failure
+        if !success {
+            // Extract compilation errors
+            for cap in self.error_regex.captures_iter(&result.output) {
+                let error = TestError {
+                    error_type: ErrorType::CompileError,
+                    message: cap[2].to_string(),
+                    file: Some(cap[3].trim().to_string()),
+                    line: cap[4].parse().ok(),
+                    column: cap[5].parse().ok(),
+                };
 
-            analysis.errors.push(error);
-        }
+                analysis.errors.push(error);
+            }
 
-        // Extract panics
-        for cap in self.panic_regex.captures_iter(&result.output) {
-            let error = TestError {
-                error_type: ErrorType::Panic,
-                message: cap[1].to_string(),
-                file: Some(cap[2].trim().to_string()),
-                line: cap[3].parse().ok(),
-                column: cap[4].parse().ok(),
-            };
+            // Extract panics
+            for cap in self.panic_regex.captures_iter(&result.output) {
+                let error = TestError {
+                    error_type: ErrorType::Panic,
+                    message: cap[1].to_string(),
+                    file: Some(cap[2].trim().to_string()),
+                    line: cap[3].parse().ok(),
+                    column: cap[4].parse().ok(),
+                };
 
-            analysis.errors.push(error);
-        }
+                analysis.errors.push(error);
+            }
 
-        // Extract test failures
-        for cap in self.test_failure_regex.captures_iter(&result.output) {
-            let error = TestError {
-                error_type: ErrorType::TestFailure,
-                message: format!("Test '{}' failed", &cap[1]),
-                file: None,
-                line: None,
-                column: None,
-            };
+            // Extract test failures
+            for cap in self.test_failure_regex.captures_iter(&result.output) {
+                let error = TestError {
+                    error_type: ErrorType::TestFailure,
+                    message: format!("Test '{}' failed", &cap[1]),
+                    file: None,
+                    line: None,
+                    column: None,
+                };
 
-            analysis.errors.push(error);
+                analysis.errors.push(error);
+            }
         }
 
         // Compare performance if we have a baseline

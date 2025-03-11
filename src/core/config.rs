@@ -2,18 +2,22 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::fs;
 use std::path::Path;
+use std::collections::HashMap;
 
 /// Top-level configuration structure
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
-    /// LLM configuration
-    pub llm: LlmConfig,
+    /// LLM configurations
+    pub llm: HashMap<String, LlmConfig>,
 
     /// Agent configuration
     pub agent: AgentConfig,
 
     /// Git configuration
     pub git: Option<GitConfig>,
+
+    /// Testing configuration
+    pub testing: TestingConfig,
 }
 
 /// LLM provider configuration
@@ -72,6 +76,34 @@ pub struct GitConfig {
     pub branch_prefix: String,
 }
 
+/// Testing configuration
+#[derive(Debug, Deserialize, Clone)]
+pub struct TestingConfig {
+    /// Whether to run linting checks
+    #[serde(default = "default_linting_enabled")]
+    pub linting_enabled: bool,
+
+    /// Whether to check that code compiles
+    #[serde(default = "default_compilation_check")]
+    pub compilation_check: bool,
+
+    /// Whether to run unit tests
+    #[serde(default = "default_run_unit_tests")]
+    pub run_unit_tests: bool,
+
+    /// Whether to run integration tests
+    #[serde(default = "default_run_integration_tests")]
+    pub run_integration_tests: bool,
+
+    /// Whether to run performance benchmarks
+    #[serde(default = "default_performance_benchmarks")]
+    pub performance_benchmarks: bool,
+
+    /// Timeout for test execution in seconds
+    #[serde(default = "default_test_timeout")]
+    pub timeout_seconds: u64,
+}
+
 // Default values for optional configuration
 fn default_max_tokens() -> usize {
     1024
@@ -93,6 +125,31 @@ fn default_branch_prefix() -> String {
     "borg/improvement/".to_string()
 }
 
+// Default values for testing configuration
+fn default_linting_enabled() -> bool {
+    true
+}
+
+fn default_compilation_check() -> bool {
+    true
+}
+
+fn default_run_unit_tests() -> bool {
+    true
+}
+
+fn default_run_integration_tests() -> bool {
+    false
+}
+
+fn default_performance_benchmarks() -> bool {
+    false
+}
+
+fn default_test_timeout() -> u64 {
+    300
+}
+
 impl Config {
     /// Load configuration from a file
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
@@ -109,13 +166,15 @@ impl Config {
     #[cfg(test)]
     pub fn for_testing() -> Self {
         Self {
-            llm: LlmConfig {
-                provider: "mock".to_string(),
-                api_key: "test-key".to_string(),
-                model: "test-model".to_string(),
-                max_tokens: default_max_tokens(),
-                temperature: default_temperature(),
-            },
+            llm: HashMap::from([
+                ("mock".to_string(), LlmConfig {
+                    provider: "mock".to_string(),
+                    api_key: "test-key".to_string(),
+                    model: "test-model".to_string(),
+                    max_tokens: default_max_tokens(),
+                    temperature: default_temperature(),
+                }),
+            ]),
             agent: AgentConfig {
                 max_memory_usage_mb: 1024,
                 max_cpu_usage_percent: 50,
@@ -128,6 +187,14 @@ impl Config {
                 token: None,
                 branch_prefix: default_branch_prefix(),
             }),
+            testing: TestingConfig {
+                linting_enabled: default_linting_enabled(),
+                compilation_check: default_compilation_check(),
+                run_unit_tests: default_run_unit_tests(),
+                run_integration_tests: default_run_integration_tests(),
+                performance_benchmarks: default_performance_benchmarks(),
+                timeout_seconds: default_test_timeout(),
+            },
         }
     }
 }

@@ -143,13 +143,37 @@ impl CodeGenerator for LlmCodeGenerator {
         // Fetch content of all relevant files
         let current_code = self.fetch_code_content(&context.file_paths).await?;
 
-        // Generate the prompt
-        let prompt = self.prompt_manager.create_improvement_prompt(context, &current_code);
+        // Determine the appropriate prompt type based on the task description
+        let prompt = if context.task.to_lowercase().contains("bug") || context.task.to_lowercase().contains("fix") {
+            log::info!("Using bugfix prompt for task: {}", context.task);
+            self.prompt_manager.create_bugfix_prompt(context, &current_code)
+        } else if context.task.to_lowercase().contains("feature") || context.task.to_lowercase().contains("implement") || context.task.to_lowercase().contains("add") {
+            log::info!("Using feature prompt for task: {}", context.task);
+            self.prompt_manager.create_feature_prompt(context, &current_code)
+        } else if context.task.to_lowercase().contains("refactor") || context.task.to_lowercase().contains("restructure") || context.task.to_lowercase().contains("simplify") {
+            log::info!("Using refactor prompt for task: {}", context.task);
+            self.prompt_manager.create_refactor_prompt(context, &current_code)
+        } else {
+            log::info!("Using general improvement prompt for task: {}", context.task);
+            self.prompt_manager.create_improvement_prompt(context, &current_code)
+        };
 
         log::debug!("Generated prompt for LLM: \n{}", prompt);
 
-        // Ask the LLM
-        let response = match self.llm.generate(&prompt, Some(4000), Some(0.7)).await {
+        // Ask the LLM with appropriate parameters based on the task
+        let max_tokens = Some(4096); // Increased token limit for more detailed responses
+        let temperature = if context.task.to_lowercase().contains("bug") || context.task.to_lowercase().contains("fix") {
+            // Lower temperature for bug fixes to get more deterministic outputs
+            Some(0.2)
+        } else if context.task.to_lowercase().contains("feature") || context.task.to_lowercase().contains("innovative") {
+            // Higher temperature for features to encourage creativity
+            Some(0.7)
+        } else {
+            // Balanced temperature for most improvements
+            Some(0.4)
+        };
+
+        let response = match self.llm.generate(&prompt, max_tokens, temperature).await {
             Ok(resp) => resp,
             Err(e) => {
                 log::error!("LLM API error: {}", e);
