@@ -27,3 +27,6 @@ config.toml           # Ignore the main config file with API keys
 # OS specific files
 .DS_Store
 Thumbs.db
+
+# LLM logs
+logs/llm/
