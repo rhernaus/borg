@@ -18,7 +18,7 @@ Cargo.lock
 
 # Configuration with sensitive data
 config.production.toml
-config.toml           # Ignore the main config file with API keys
+# config.toml           # Ignore the main config file with API keys
 *.local.toml          # Ignore any local config files
 
 # Logs

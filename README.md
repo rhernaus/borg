@@ -48,16 +48,18 @@ This project follows a phased development approach:
 
 ## Configuration
 
-The application uses a `config.toml` file for configuration. For security reasons, this file is not committed to the repository.
+The application uses configuration files to manage its settings. For security reasons, your personal configuration with API keys is kept in a separate file that is not committed to the repository.
 
 ### Setting Up Configuration
 
-1. Copy the template configuration file:
+1. The repository includes `config.toml`, which is a template file with placeholder values.
+
+2. For local development, copy this template to a production configuration file:
    ```
-   cp config.template.toml config.toml
+   cp config.toml config.production.toml
    ```
 
-2. Edit the `config.toml` file and add your API keys:
+3. Edit the `config.production.toml` file and add your API keys:
    ```toml
    # Default LLM configuration
    [llm.default]
@@ -68,7 +70,9 @@ The application uses a `config.toml` file for configuration. For security reason
    # Additional LLM configurations for specific tasks...
    ```
 
-3. The `config.toml` file is automatically ignored by Git to prevent accidentally committing your API keys.
+4. The `config.production.toml` file is automatically ignored by Git to prevent accidentally committing your API keys.
+
+5. By default, the application will use `config.production.toml` if it exists, and fall back to `config.toml` otherwise.
 
 ### Multi-LLM Configuration
 

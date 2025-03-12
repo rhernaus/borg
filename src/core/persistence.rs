@@ -42,6 +42,10 @@ impl PersistenceManager {
         let file_path = self.goals_file_path();
         info!("Saving {} optimization goals to {:?}", goals.len(), file_path);
 
+        // Ensure the data directory exists before writing
+        fs::create_dir_all(&self.data_dir)
+            .with_context(|| format!("Failed to create data directory: {:?}", self.data_dir))?;
+
         // Create a temporary file path for atomic write
         let temp_path = file_path.with_extension("tmp");
 
@@ -66,6 +70,10 @@ impl PersistenceManager {
     /// Load optimization goals from disk
     pub fn load_goals(&self) -> Result<Vec<OptimizationGoal>> {
         let file_path = self.goals_file_path();
+
+        // Ensure the data directory exists
+        fs::create_dir_all(&self.data_dir)
+            .with_context(|| format!("Failed to create data directory: {:?}", self.data_dir))?;
 
         // If the file doesn't exist, return an empty vector
         if !file_path.exists() {

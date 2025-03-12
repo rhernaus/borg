@@ -1,5 +1,7 @@
 # Borg Agent Configuration Template
-# Copy this file to config.toml and add your API keys
+# This is an example configuration file.
+# For local development, copy this file to config.production.toml and add your API keys.
+# The config.production.toml file is ignored by Git to prevent accidentally committing your API keys.
 
 # Default LLM configuration (used as fallback)
 [llm.default]
@@ -61,3 +63,12 @@ run_unit_tests = true                 # Run unit tests on changes
 run_integration_tests = false         # Run integration tests (more time-consuming)
 performance_benchmarks = false        # Run performance benchmarks
 timeout_seconds = 300                 # Timeout for test execution
+
+[llm_logging]
+enabled = true
+log_dir = "./logs/llm"
+console_logging = true
+include_full_prompts = true
+include_full_responses = true
+max_log_size_mb = 100
+log_files_to_keep = 10
