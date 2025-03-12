@@ -3,6 +3,8 @@ use std::fmt;
 use crate::core::ethics::{EthicsManager, EthicalImpactAssessment, RiskLevel};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use chrono::{DateTime, Utc};
+use std::collections::HashMap;
 
 /// Categories of optimization goals that the agent can pursue
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -51,6 +53,12 @@ impl fmt::Display for OptimizationCategory {
     }
 }
 
+impl Default for OptimizationCategory {
+    fn default() -> Self {
+        OptimizationCategory::General
+    }
+}
+
 /// Priority level for optimization goals
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PriorityLevel {
@@ -65,6 +73,28 @@ pub enum PriorityLevel {
 
     /// Critical priority - should be addressed immediately
     Critical = 3,
+}
+
+impl From<PriorityLevel> for u8 {
+    fn from(level: PriorityLevel) -> Self {
+        match level {
+            PriorityLevel::Low => 25,
+            PriorityLevel::Medium => 50,
+            PriorityLevel::High => 75,
+            PriorityLevel::Critical => 100,
+        }
+    }
+}
+
+impl From<u8> for PriorityLevel {
+    fn from(value: u8) -> Self {
+        match value {
+            0..=30 => PriorityLevel::Low,
+            31..=60 => PriorityLevel::Medium,
+            61..=90 => PriorityLevel::High,
+            _ => PriorityLevel::Critical,
+        }
+    }
 }
 
 impl fmt::Display for PriorityLevel {
@@ -109,118 +139,268 @@ impl fmt::Display for GoalStatus {
     }
 }
 
+/// Resource estimates for a goal
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ResourceEstimates {
+    /// Estimated time to complete in hours
+    #[serde(default)]
+    pub time_hours: f64,
+
+    /// Estimated complexity on a scale of 1-10
+    #[serde(default)]
+    pub complexity: u8,
+
+    /// Estimated memory usage in MB
+    #[serde(default)]
+    pub memory_mb: Option<f64>,
+
+    /// Estimated CPU usage percentage
+    #[serde(default)]
+    pub cpu_percent: Option<f64>,
+}
+
+/// Example code snippet for a goal
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodeSample {
+    /// Description of what this code sample demonstrates
+    pub description: String,
+
+    /// The actual code
+    pub code: String,
+
+    /// The language of the code
+    pub language: String,
+}
+
+/// Criteria for filtering goals
+#[derive(Debug, Clone, Default)]
+pub struct FilterCriteria {
+    /// Filter by status
+    pub status: Option<GoalStatus>,
+
+    /// Filter by area (tag content)
+    pub area: Option<String>,
+
+    /// Filter by minimum priority
+    pub min_priority: Option<u8>,
+
+    /// Filter by specific tags that must all be present
+    pub tags: Vec<String>,
+}
+
+/// Default priority for optimization goals
+fn default_priority() -> u8 {
+    50 // Medium priority (1-100 scale)
+}
+
 /// Detailed specification of an optimization goal
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizationGoal {
     /// Unique identifier for the goal
     pub id: String,
 
-    /// Title/summary of the goal
+    /// Title of the goal
     pub title: String,
 
-    /// Detailed description of the goal
+    /// Detailed description of what should be improved
     pub description: String,
 
-    /// Category of the optimization
-    pub category: OptimizationCategory,
-
-    /// Priority level
-    pub priority: PriorityLevel,
-
-    /// Current status
+    /// Status of the goal
     pub status: GoalStatus,
 
-    /// Specific files or modules affected
-    pub affected_areas: Vec<String>,
+    /// Creation date
+    #[serde(default = "chrono::Utc::now")]
+    pub created_at: DateTime<Utc>,
 
-    /// Metrics to measure success (e.g., "Reduce execution time by 20%")
+    /// Last update date
+    #[serde(default = "chrono::Utc::now")]
+    pub updated_at: DateTime<Utc>,
+
+    /// Optional resource estimates
+    #[serde(default)]
+    pub resources: ResourceEstimates,
+
+    /// Optional priority (1-100, higher is more important)
+    #[serde(default = "default_priority")]
+    pub priority: u8,
+
+    /// Associated strategic objective ID
+    #[serde(default)]
+    pub objective_id: Option<String>,
+
+    /// Associated milestone ID
+    #[serde(default)]
+    pub milestone_id: Option<String>,
+
+    /// Related tactical goals
+    #[serde(default)]
+    pub related_goals: Vec<String>,
+
+    /// Dependencies (goals that must be completed first)
+    #[serde(default)]
+    pub dependencies: Vec<String>,
+
+    /// Improvement level aimed for (-5 to 5, negative is regression)
+    #[serde(default)]
+    pub improvement_target: i8,
+
+    /// Ethical considerations
+    #[serde(default)]
+    pub ethical_considerations: Vec<String>,
+
+    /// Optional code samples for improvement
+    #[serde(default)]
+    pub code_samples: Vec<CodeSample>,
+
+    /// Implementation details (if any)
+    #[serde(default)]
+    pub implementation: Option<String>,
+
+    /// Test results (if any)
+    #[serde(default)]
+    pub test_results: Option<String>,
+
+    /// Optional tags for categorization
+    #[serde(default)]
+    pub tags: Vec<String>,
+
+    /// Success metrics for this goal
+    #[serde(default)]
     pub success_metrics: Vec<String>,
 
-    /// Notes on implementation approach
+    /// Notes about implementation approach
+    #[serde(default)]
     pub implementation_notes: Option<String>,
 
-    /// Timestamp when the goal was created
-    pub created_at: chrono::DateTime<chrono::Utc>,
-
-    /// Timestamp when the goal was last updated
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-
-    /// Ethical impact assessment, if performed
+    /// Ethical assessment results
+    #[serde(default)]
     pub ethical_assessment: Option<EthicalImpactAssessment>,
 
-    /// Dependencies on other goals (by ID)
-    pub dependencies: Vec<String>,
+    /// Category of optimization
+    #[serde(default)]
+    pub category: OptimizationCategory,
 }
 
 impl OptimizationGoal {
-    /// Create a new optimization goal with default values
-    pub fn new(id: &str, title: &str, description: &str, category: OptimizationCategory) -> Self {
-        let now = chrono::Utc::now();
-
+    /// Create a new optimization goal
+    pub fn new(id: &str, title: &str, description: &str) -> Self {
+        let now = Utc::now();
         Self {
             id: id.to_string(),
             title: title.to_string(),
             description: description.to_string(),
-            category,
-            priority: PriorityLevel::Medium,
             status: GoalStatus::NotStarted,
-            affected_areas: Vec::new(),
-            success_metrics: Vec::new(),
-            implementation_notes: None,
             created_at: now,
             updated_at: now,
-            ethical_assessment: None,
+            resources: ResourceEstimates::default(),
+            priority: default_priority(),
+            objective_id: None,
+            milestone_id: None,
+            related_goals: Vec::new(),
             dependencies: Vec::new(),
+            improvement_target: 0,
+            ethical_considerations: Vec::new(),
+            code_samples: Vec::new(),
+            implementation: None,
+            test_results: None,
+            tags: Vec::new(),
+            success_metrics: Vec::new(),
+            implementation_notes: None,
+            ethical_assessment: None,
+            category: OptimizationCategory::General,
         }
     }
 
-    /// Change the status of the goal
+    /// Check if this goal is associated with a specific strategic objective
+    pub fn is_part_of_objective(&self, objective_id: &str) -> bool {
+        self.objective_id.as_ref().map_or(false, |id| id == objective_id)
+    }
+
+    /// Get a summary of the goal
+    pub fn summary(&self) -> String {
+        format!(
+            "Goal '{}': {} (Status: {})",
+            self.id, self.title, self.status
+        )
+    }
+
+    /// Get a detailed description of the goal
+    pub fn details(&self) -> String {
+        let mut details = format!(
+            "# Goal: {}\n\n## Description\n{}\n\n## Status\n{}\n\n",
+            self.title, self.description, self.status
+        );
+
+        if let Some(objective_id) = &self.objective_id {
+            details.push_str(&format!("## Strategic Objective\n{}\n\n", objective_id));
+        }
+
+        if !self.dependencies.is_empty() {
+            details.push_str("## Dependencies\n");
+            for dep in &self.dependencies {
+                details.push_str(&format!("- {}\n", dep));
+            }
+            details.push_str("\n");
+        }
+
+        if !self.ethical_considerations.is_empty() {
+            details.push_str("## Ethical Considerations\n");
+            for consideration in &self.ethical_considerations {
+                details.push_str(&format!("- {}\n", consideration));
+            }
+            details.push_str("\n");
+        }
+
+        details
+    }
+
+    /// Evaluate if this goal matches a specific area
+    pub fn matches_area(&self, area: &str) -> bool {
+        // Match by tag
+        self.tags.iter().any(|tag| tag.contains(area))
+        // Match by title or description
+        || self.title.to_lowercase().contains(&area.to_lowercase())
+        || self.description.to_lowercase().contains(&area.to_lowercase())
+    }
+
+    /// Add a dependency to this goal
+    pub fn add_dependency(&mut self, goal_id: &str) {
+        // Only add if not already present
+        if !self.dependencies.contains(&goal_id.to_string()) {
+            self.dependencies.push(goal_id.to_string());
+        }
+    }
+
+    /// Update the status of this goal
     pub fn update_status(&mut self, new_status: GoalStatus) {
         self.status = new_status;
         self.updated_at = chrono::Utc::now();
     }
 
-    /// Update the priority of the goal
-    pub fn update_priority(&mut self, new_priority: PriorityLevel) {
-        self.priority = new_priority;
-        self.updated_at = chrono::Utc::now();
-    }
-
-    /// Add a dependency on another goal
-    pub fn add_dependency(&mut self, goal_id: &str) {
-        if !self.dependencies.contains(&goal_id.to_string()) {
-            self.dependencies.push(goal_id.to_string());
-            self.updated_at = chrono::Utc::now();
-        }
-    }
-
-    /// Remove a dependency
-    pub fn remove_dependency(&mut self, goal_id: &str) {
-        self.dependencies.retain(|id| id != goal_id);
-        self.updated_at = chrono::Utc::now();
-    }
-
-    /// Perform an ethical assessment of this goal
+    /// Conduct an ethical assessment of this goal
     pub fn assess_ethics(&mut self, ethics_manager: &mut EthicsManager) {
-        // Create an assessment based on the goal
         let assessment = ethics_manager.assess_ethical_impact(
             &self.description,
-            &self.implementation_notes.clone().unwrap_or_default(),
-            &self.affected_areas,
+            &self.implementation.clone().unwrap_or_default()
         );
 
         self.ethical_assessment = Some(assessment);
         self.updated_at = chrono::Utc::now();
     }
 
-    /// Check if the goal meets ethical standards
+    /// Check if this goal has been ethically assessed and approved
     pub fn is_ethically_sound(&self) -> bool {
-        match &self.ethical_assessment {
-            Some(assessment) => {
-                assessment.is_approved && assessment.risk_level < RiskLevel::High
-            }
-            None => false // Cannot determine without an assessment
+        if let Some(assessment) = &self.ethical_assessment {
+            assessment.is_approved
+        } else {
+            false
         }
+    }
+
+    /// Update the priority of this goal
+    pub fn update_priority(&mut self, new_priority: PriorityLevel) {
+        self.priority = new_priority.into();
+        self.updated_at = chrono::Utc::now();
     }
 }
 
@@ -279,18 +459,22 @@ impl OptimizationManager {
 
     /// Get goals by category
     pub fn get_goals_by_category(&self, category: OptimizationCategory) -> Vec<&OptimizationGoal> {
-        self.goals.iter().filter(|g| g.category == category).collect()
+        let category_str = category.to_string().to_lowercase();
+        self.goals.iter()
+            .filter(|g| g.category == category || g.tags.iter().any(|t| t == &category_str))
+            .collect()
     }
 
     /// Get goals by priority
     pub fn get_goals_by_priority(&self, priority: PriorityLevel) -> Vec<&OptimizationGoal> {
-        self.goals.iter().filter(|g| g.priority == priority).collect()
+        let priority_val = u8::from(priority);
+        self.goals.iter().filter(|g| g.priority == priority_val).collect()
     }
 
     /// Get goals that affect a specific file or area
     pub fn get_goals_by_affected_area(&self, area: &str) -> Vec<&OptimizationGoal> {
         self.goals.iter()
-            .filter(|g| g.affected_areas.iter().any(|a| a.contains(area)))
+            .filter(|g| g.tags.iter().any(|t| t.contains(area)))
             .collect()
     }
 
@@ -333,18 +517,23 @@ impl OptimizationManager {
             .to_string();
 
         // Create a new goal with a clone of the category
-        let mut goal = OptimizationGoal::new(&id, &title, analysis_result, category.clone());
+        let mut goal = OptimizationGoal::new(&id, &title, analysis_result);
 
-        // Set affected areas
-        goal.affected_areas = affected_files.to_vec();
+        // Add affected files as tags
+        for file in affected_files {
+            goal.tags.push(format!("file:{}", file));
+        }
+
+        // Add category as a tag
+        goal.tags.push(category.to_string().to_lowercase());
 
         // Set priority based on category (just an example heuristic)
         goal.priority = match category {
-            OptimizationCategory::Financial => PriorityLevel::Critical, // Highest priority for financial goals
-            OptimizationCategory::Security => PriorityLevel::Critical,
-            OptimizationCategory::Performance => PriorityLevel::High,
-            OptimizationCategory::ErrorHandling => PriorityLevel::High,
-            _ => PriorityLevel::Medium,
+            OptimizationCategory::Financial => u8::from(PriorityLevel::Critical), // Highest priority for financial goals
+            OptimizationCategory::Security => u8::from(PriorityLevel::Critical),
+            OptimizationCategory::Performance => u8::from(PriorityLevel::High),
+            OptimizationCategory::ErrorHandling => u8::from(PriorityLevel::High),
+            _ => u8::from(PriorityLevel::Medium),
         };
 
         goal
@@ -352,27 +541,56 @@ impl OptimizationManager {
 
     /// Update goal dependences based on affected areas
     pub fn update_goal_dependencies(&mut self) {
-        // First collect all goal IDs and their affected areas
-        let goal_areas: Vec<(String, Vec<String>)> = self.goals
+        // First collect all goal IDs and their file tags
+        let goal_files: Vec<(String, Vec<String>)> = self.goals
             .iter()
-            .map(|g| (g.id.clone(), g.affected_areas.clone()))
+            .map(|g| {
+                let file_tags = g.tags.iter()
+                    .filter(|t| t.starts_with("file:"))
+                    .cloned()
+                    .collect();
+                (g.id.clone(), file_tags)
+            })
             .collect();
 
-        // Then update dependencies for each goal
-        for goal in &mut self.goals {
-            // Find other goals that affect the same areas
-            for (other_id, areas) in &goal_areas {
+        // Pre-compute dependencies for each goal
+        let mut new_dependencies: HashMap<String, Vec<String>> = HashMap::new();
+
+        for goal in &self.goals {
+            // Get this goal's file tags
+            let goal_file_tags: Vec<&String> = goal.tags.iter()
+                .filter(|t| t.starts_with("file:"))
+                .collect();
+
+            // Find other goals that affect the same files
+            let mut dependencies = Vec::new();
+
+            for (other_id, file_tags) in &goal_files {
                 // Skip self
                 if &goal.id == other_id {
                     continue;
                 }
 
-                // Check if there's any overlap in affected areas
-                let has_overlap = areas.iter()
-                    .any(|area| goal.affected_areas.contains(area));
+                // Check if there's any overlap in affected files
+                let has_overlap = file_tags.iter()
+                    .any(|tag| goal_file_tags.contains(&tag));
 
                 if has_overlap {
-                    goal.add_dependency(other_id);
+                    dependencies.push(other_id.clone());
+                }
+            }
+
+            // Store dependencies for this goal
+            if !dependencies.is_empty() {
+                new_dependencies.insert(goal.id.clone(), dependencies);
+            }
+        }
+
+        // Now apply the dependencies
+        for goal in &mut self.goals {
+            if let Some(deps) = new_dependencies.get(&goal.id) {
+                for dep_id in deps {
+                    goal.add_dependency(dep_id);
                 }
             }
         }
@@ -387,4 +605,95 @@ impl OptimizationManager {
     pub fn ethics_manager_mut(&mut self) -> &Arc<Mutex<EthicsManager>> {
         &self.ethics_manager
     }
+}
+
+/// Filter goals by specific criteria
+pub fn filter_goals(goals: &[OptimizationGoal], criteria: &FilterCriteria) -> Vec<OptimizationGoal> {
+    let mut filtered = goals.to_vec();
+
+    // Filter by status if specified
+    if let Some(status) = &criteria.status {
+        filtered.retain(|g| &g.status == status);
+    }
+
+    // Filter by area if specified
+    if let Some(area) = &criteria.area {
+        filtered.retain(|g| g.matches_area(area));
+    }
+
+    // Filter by priority if specified
+    if let Some(min_priority) = criteria.min_priority {
+        filtered.retain(|g| g.priority >= min_priority);
+    }
+
+    // Filter by tags if specified
+    if !criteria.tags.is_empty() {
+        filtered.retain(|g| {
+            criteria.tags.iter().all(|tag| g.tags.contains(tag))
+        });
+    }
+
+    filtered
+}
+
+/// Assign affected areas to a goal based on analysis
+pub fn assign_affected_areas(goal: &mut OptimizationGoal, affected_files: &[String]) {
+    // Add the files as tags with a file: prefix
+    for file in affected_files {
+        let file_tag = format!("file:{}", file);
+        // Only add as a tag if it's not already there
+        if !goal.tags.contains(&file_tag) {
+            goal.tags.push(file_tag);
+        }
+    }
+}
+
+/// Get a map of conflicting goals
+pub fn get_conflicting_goals(goals: &[OptimizationGoal]) -> HashMap<String, Vec<String>> {
+    let mut conflicts = HashMap::new();
+
+    // Create a map of file to goals that modify it
+    let mut file_goals: HashMap<String, Vec<String>> = HashMap::new();
+
+    for goal in goals.iter().filter(|g| g.status == GoalStatus::InProgress) {
+        // Use tags that look like file paths as affected areas
+        let file_paths: Vec<String> = goal.tags.iter()
+            .filter(|tag| tag.contains('/') || tag.contains('\\'))
+            .cloned()
+            .collect();
+
+        for tag in file_paths {
+            file_goals.entry(tag)
+                .or_insert_with(Vec::new)
+                .push(goal.id.clone());
+        }
+    }
+
+    // Find goals that overlap in affected areas
+    for goal in goals.iter().filter(|g| g.status == GoalStatus::InProgress) {
+        let mut conflicting = Vec::new();
+
+        // Get file paths from tags
+        let file_paths: Vec<String> = goal.tags.iter()
+            .filter(|tag| tag.contains('/') || tag.contains('\\'))
+            .cloned()
+            .collect();
+
+        for tag in file_paths {
+            if let Some(file_goals) = file_goals.get(&tag) {
+                // Add goals that affect the same file, excluding the current goal
+                for other_goal in file_goals {
+                    if other_goal != &goal.id && !conflicting.contains(other_goal) {
+                        conflicting.push(other_goal.clone());
+                    }
+                }
+            }
+        }
+
+        if !conflicting.is_empty() {
+            conflicts.insert(goal.id.clone(), conflicting);
+        }
+    }
+
+    conflicts
 }

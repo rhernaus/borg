@@ -5,6 +5,7 @@ edition = "2021"
 description = "An autonomous self-improving AI agent implemented in Rust"
 authors = ["Your Name <your.email@example.com>"]
 readme = "README.md"
+default-run = "borg"
 
 [dependencies]
 # For async runtime
@@ -39,6 +40,8 @@ regex = "1.9.5"
 chrono = { version = "0.4.31", features = ["serde"] }
 # UUID generation
 uuid = { version = "1.4.1", features = ["v4"] }
+# Random number generation
+rand = "0.8.5"
 
 [dev-dependencies]
 # Testing framework

@@ -293,8 +293,7 @@ impl EthicsManager {
     /// Assess the ethical impact of a proposed change
     pub fn assess_ethical_impact(&mut self,
                                 _description: &str,
-                                _code_change: &str,
-                                _affected_areas: &[String]) -> EthicalImpactAssessment {
+                                _code_change: &str) -> EthicalImpactAssessment {
         // This is a placeholder implementation - in a real system, this would contain
         // sophisticated analysis of the proposed change against ethical principles
 

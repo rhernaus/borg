@@ -3,10 +3,12 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::json;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use std::sync::Arc;
 
-use crate::core::config::LlmConfig;
+use crate::core::config::{LlmConfig, LlmLoggingConfig};
 use crate::core::error::BorgError;
+use crate::code_generation::llm_logging::LlmLogger;
 
 /// LLM provider trait
 #[async_trait]
@@ -20,11 +22,11 @@ pub struct LlmFactory;
 
 impl LlmFactory {
     /// Create a new LLM provider based on configuration
-    pub fn create(config: LlmConfig) -> Result<Box<dyn LlmProvider>> {
+    pub fn create(config: LlmConfig, logging_config: LlmLoggingConfig) -> Result<Box<dyn LlmProvider>> {
         match config.provider.as_str() {
-            "openai" => Ok(Box::new(OpenAiProvider::new(config)?)),
-            "anthropic" => Ok(Box::new(AnthropicProvider::new(config)?)),
-            "mock" => Ok(Box::new(MockLlmProvider::new(config)?)),
+            "openai" => Ok(Box::new(OpenAiProvider::new(config, logging_config)?)),
+            "anthropic" => Ok(Box::new(AnthropicProvider::new(config, logging_config)?)),
+            "mock" => Ok(Box::new(MockLlmProvider::new(config, logging_config)?)),
             // Add more providers as needed
             _ => Err(anyhow::anyhow!(BorgError::ConfigError(format!(
                 "Unsupported LLM provider: {}",
@@ -39,20 +41,24 @@ pub struct OpenAiProvider {
     api_key: String,
     model: String,
     client: Client,
+    logger: Arc<LlmLogger>,
 }
 
 impl OpenAiProvider {
     /// Create a new OpenAI provider
-    pub fn new(config: LlmConfig) -> Result<Self> {
+    pub fn new(config: LlmConfig, logging_config: LlmLoggingConfig) -> Result<Self> {
         let client = Client::builder()
             .timeout(Duration::from_secs(120))
             .build()
             .context("Failed to create HTTP client")?;
 
+        let logger = Arc::new(LlmLogger::new(logging_config)?);
+
         Ok(Self {
             api_key: config.api_key,
             model: config.model,
             client,
+            logger,
         })
     }
 }
@@ -79,6 +85,12 @@ impl LlmProvider for OpenAiProvider {
         });
 
         log::debug!("Sending request to OpenAI API with model: {}", self.model);
+
+        // Log the request
+        self.logger.log_request("OpenAI", &self.model, prompt)?;
+
+        // Track time for request duration
+        let start_time = Instant::now();
 
         let response = match self.client
             .post(url)
@@ -129,8 +141,16 @@ impl LlmProvider for OpenAiProvider {
         let chat_response: ChatResponse = response.json().await
             .context("Failed to parse OpenAI API response")?;
 
+        // Calculate request duration
+        let duration = start_time.elapsed().as_millis() as u64;
+
         if let Some(choice) = chat_response.choices.first() {
-            Ok(choice.message.content.clone())
+            let content = choice.message.content.clone();
+
+            // Log the response
+            self.logger.log_response("OpenAI", &self.model, &content, duration)?;
+
+            Ok(content)
         } else {
             Err(anyhow::anyhow!(BorgError::LlmApiError("OpenAI API returned no choices".to_string())))
         }
@@ -142,20 +162,24 @@ pub struct AnthropicProvider {
     api_key: String,
     model: String,
     client: Client,
+    logger: Arc<LlmLogger>,
 }
 
 impl AnthropicProvider {
     /// Create a new Anthropic provider
-    pub fn new(config: LlmConfig) -> Result<Self> {
+    pub fn new(config: LlmConfig, logging_config: LlmLoggingConfig) -> Result<Self> {
         let client = Client::builder()
             .timeout(Duration::from_secs(120))
             .build()
             .context("Failed to create HTTP client")?;
 
+        let logger = Arc::new(LlmLogger::new(logging_config)?);
+
         Ok(Self {
             api_key: config.api_key,
             model: config.model,
             client,
+            logger,
         })
     }
 }
@@ -176,6 +200,12 @@ impl LlmProvider for AnthropicProvider {
             "max_tokens": max_tokens.unwrap_or(1024),
             "temperature": temperature.unwrap_or(0.7),
         });
+
+        // Log the request
+        self.logger.log_request("Anthropic", &self.model, prompt)?;
+
+        // Track time for request duration
+        let start_time = Instant::now();
 
         let response = self.client
             .post(url)
@@ -210,8 +240,16 @@ impl LlmProvider for AnthropicProvider {
         let anthropic_response: AnthropicResponse = response.json().await
             .context("Failed to parse Anthropic API response")?;
 
+        // Calculate request duration
+        let duration = start_time.elapsed().as_millis() as u64;
+
         if let Some(block) = anthropic_response.content.first() {
-            Ok(block.text.clone())
+            let content = block.text.clone();
+
+            // Log the response
+            self.logger.log_response("Anthropic", &self.model, &content, duration)?;
+
+            Ok(content)
         } else {
             Err(anyhow::anyhow!(BorgError::LlmApiError("Anthropic API returned no content".to_string())))
         }
@@ -221,15 +259,19 @@ impl LlmProvider for AnthropicProvider {
 /// A mock LLM provider for testing without API keys
 pub struct MockLlmProvider {
     model: String,
+    logger: Arc<LlmLogger>,
 }
 
 impl MockLlmProvider {
     /// Create a new mock provider
-    pub fn new(config: LlmConfig) -> Result<Self> {
+    pub fn new(config: LlmConfig, logging_config: LlmLoggingConfig) -> Result<Self> {
         log::info!("Creating mock LLM provider with model: {}", config.model);
+
+        let logger = Arc::new(LlmLogger::new(logging_config)?);
 
         Ok(Self {
             model: config.model,
+            logger,
         })
     }
 
@@ -263,34 +305,26 @@ impl MockLlmProvider {
 
         // Generate a placeholder response with a template improvement
         format!(
-            r#"I've analyzed the code and here's my implementation for the task: "{task}".
-
-```rust
-// Improved implementation for {file_path}
-use std::sync::Arc;
-
-// This is a mock improvement generated by the mock LLM provider
-// In a real scenario, this would be generated based on the actual code
-fn improved_function() -> Result<String, Box<dyn std::error::Error>> {{
-    println!("Running improved function with better performance");
-
-    // Mock improvement: Added caching for better performance
-    let mut cache = std::collections::HashMap::new();
-    cache.insert("key", "value");
-
-    Ok("Success".to_string())
-}}
-```
-
-## EXPLANATION:
-This implementation improves the code by:
-1. Adding proper error handling with Result type
-2. Implementing a caching mechanism to avoid redundant computations
-3. Improving code clarity with better variable names and comments
-4. Using more efficient data structures for the task
-
-The changes should result in better performance and maintainability.
-"#
+            "I've analyzed the task to '{task}' for file {file_path}.\n\n\
+            ## CODE IMPROVEMENT:\n\
+            ```rust\n\
+            // Improved implementation for {task}\n\
+            pub fn improved_function() {{\n\
+                // More efficient algorithm\n\
+                let result = compute_faster();\n\
+                println!(\"Improved result: {{}}\", result);\n\
+            }}\n\
+            \n\
+            fn compute_faster() -> u64 {{\n\
+                // Use memoization for better performance\n\
+                let cached_result = 42;\n\
+                cached_result\n\
+            }}\n\
+            ```\n\n\
+            ## EXPLANATION:\n\
+            This improvement addresses '{task}' by implementing a more efficient algorithm with memoization, \
+            which reduces redundant calculations and improves overall performance. \
+            The new implementation maintains the same functionality while being more maintainable and faster.\n"
         )
     }
 }
@@ -298,12 +332,20 @@ The changes should result in better performance and maintainability.
 #[async_trait]
 impl LlmProvider for MockLlmProvider {
     async fn generate(&self, prompt: &str, _max_tokens: Option<usize>, _temperature: Option<f32>) -> Result<String> {
-        log::info!("Mock LLM provider generating response for prompt length: {} characters", prompt.len());
+        // Log the request
+        self.logger.log_request("Mock", &self.model, prompt)?;
 
-        // Simulate network delay
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        let start_time = Instant::now();
 
-        // Generate a mock response
-        Ok(self.generate_mock_response(prompt))
+        // Generate mock response
+        let response = self.generate_mock_response(prompt);
+
+        // Calculate duration (simulate some delay)
+        let duration = start_time.elapsed().as_millis() as u64;
+
+        // Log the response
+        self.logger.log_response("Mock", &self.model, &response, duration)?;
+
+        Ok(response)
     }
 }

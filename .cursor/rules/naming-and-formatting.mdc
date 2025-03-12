@@ -4,5 +4,5 @@ globs:
 alwaysApply: false
 ---
 ## Naming and Formatting
-- Use camelCase for variable and function names.
-- Ensure all code adheres to the project's ESLint configuration.
+- Use the casing for variable and function names that is generally used for the language.
+- Ensure all code adheres to the project's linter configuration.

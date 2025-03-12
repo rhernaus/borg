@@ -24,6 +24,71 @@ pub struct TestResult {
 
     /// Any metrics collected during the test run
     pub metrics: Option<TestMetrics>,
+
+    /// Structured test report for better feedback
+    pub report: Option<String>,
+
+    /// Specific test failures with details
+    pub failures: Option<Vec<TestFailure>>,
+
+    /// Error details if compilation failed
+    pub compilation_errors: Option<Vec<CompilationError>>,
+
+    /// Exit code of the test process
+    pub exit_code: Option<i32>,
+
+    /// The current branch being tested
+    pub branch: Option<String>,
+
+    /// The stage of testing (unit tests, integration tests, etc.)
+    pub test_stage: Option<String>,
+}
+
+/// A specific test failure
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestFailure {
+    /// The name of the failing test
+    pub test_name: String,
+
+    /// The expected output or behavior
+    pub expected: Option<String>,
+
+    /// The actual output or behavior
+    pub actual: Option<String>,
+
+    /// The file where the test is located
+    pub file: Option<String>,
+
+    /// The line number of the test
+    pub line: Option<usize>,
+
+    /// The raw test output
+    pub output: String,
+
+    /// Any additional context about the failure
+    pub context: Option<String>,
+}
+
+/// A compilation error from the test run
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompilationError {
+    /// The error message
+    pub message: String,
+
+    /// The file where the error occurred
+    pub file: Option<String>,
+
+    /// The line number where the error occurred
+    pub line: Option<usize>,
+
+    /// The column number where the error occurred
+    pub column: Option<usize>,
+
+    /// The code snippet where the error occurred
+    pub code_snippet: Option<String>,
+
+    /// Error code if any
+    pub error_code: Option<String>,
 }
 
 /// Metrics collected during a test run
@@ -175,6 +240,12 @@ impl TestRunner for CargoTestRunner {
                     output: combined_output,
                     duration,
                     metrics,
+                    report: None,
+                    failures: None,
+                    compilation_errors: None,
+                    exit_code: None,
+                    branch: Some(branch.to_string()),
+                    test_stage: None,
                 })
             },
             Ok(Err(e)) => Err(anyhow::anyhow!(BorgError::TestingError(
@@ -227,6 +298,12 @@ impl TestRunner for CargoTestRunner {
                     output: combined_output,
                     duration,
                     metrics: None, // Benchmarks don't have the same metrics as tests
+                    report: None,
+                    failures: None,
+                    compilation_errors: None,
+                    exit_code: None,
+                    branch: Some(branch.to_string()),
+                    test_stage: None,
                 })
             },
             Ok(Err(e)) => Err(anyhow::anyhow!(BorgError::TestingError(

@@ -7,6 +7,9 @@ use chrono;
 use git2::{Repository, Signature};
 use pathdiff;
 use anyhow::anyhow;
+use std::fs;
+use regex;
+use uuid;
 
 use crate::code_generation::generator::CodeGenerator;
 use crate::code_generation::llm_generator::LlmCodeGenerator;
@@ -21,6 +24,9 @@ use crate::testing::test_runner::TestRunner;
 use crate::testing::factory::TestRunnerFactory;
 use crate::version_control::git::GitManager;
 use crate::version_control::git_implementation::GitImplementation;
+use crate::core::planning::{StrategicPlanningManager, StrategicObjective};
+use crate::core::strategy::{ActionType, Plan, StrategyManager};
+use crate::core::strategies::CodeImprovementStrategy;
 
 /// The main agent structure that coordinates the self-improvement process
 pub struct Agent {
@@ -53,11 +59,17 @@ pub struct Agent {
 
     /// Persistence manager for saving/loading goals
     persistence_manager: PersistenceManager,
+
+    /// Strategic planning manager
+    strategic_planning_manager: Arc<Mutex<StrategicPlanningManager>>,
+
+    /// Strategy manager for coordinating different action strategies
+    strategy_manager: Arc<Mutex<StrategyManager>>,
 }
 
 impl Agent {
-    /// Create a new agent instance
-    pub fn new(config: Config) -> Result<Self> {
+    /// Create a new agent with the given configuration
+    pub async fn new(config: Config) -> Result<Self> {
         // Create working directory if it doesn't exist
         let working_dir = PathBuf::from(&config.agent.working_dir);
         std::fs::create_dir_all(&working_dir)
@@ -102,8 +114,12 @@ impl Agent {
             .ok_or_else(|| anyhow::anyhow!("No suitable LLM configuration found"))?
             .clone();
 
+        let workspace = working_dir.clone();
+        let code_gen_config = config.code_generation.clone();
+        let llm_logging_config = config.llm_logging.clone();
+
         let code_generator: Arc<dyn CodeGenerator> = Arc::new(
-            LlmCodeGenerator::new(llm_config, Arc::clone(&git_manager))
+            LlmCodeGenerator::new(llm_config, code_gen_config, llm_logging_config, Arc::clone(&git_manager), workspace.clone())
                 .context("Failed to create code generator")?
         );
 
@@ -111,7 +127,24 @@ impl Agent {
         let test_runner: Arc<dyn TestRunner> = TestRunnerFactory::create(&config, &working_dir)
             .context("Failed to create test runner")?;
 
-        Ok(Self {
+        // Create strategic planning manager
+        let strategic_planning_manager = Arc::new(Mutex::new(
+            StrategicPlanningManager::new(
+                optimization_manager.clone(),
+                ethics_manager.clone(),
+                &data_dir.join("planning").to_string_lossy(),
+            )
+        ));
+
+        // Create the strategy manager
+        let strategy_manager = Arc::new(Mutex::new(
+            StrategyManager::new(
+                authentication_manager.clone(),
+                ethics_manager.clone(),
+            )
+        ));
+
+        let agent = Self {
             config,
             working_dir,
             code_generator,
@@ -122,7 +155,14 @@ impl Agent {
             optimization_manager,
             authentication_manager,
             persistence_manager,
-        })
+            strategic_planning_manager,
+            strategy_manager,
+        };
+
+        // Register strategies
+        agent.register_strategies().await?;
+
+        Ok(agent)
     }
 
     /// Main loop for the agent
@@ -226,11 +266,12 @@ impl Agent {
                     let mut goal = OptimizationGoal::new(
                         "persist-001",
                         "Implement Goal Persistence to Disk",
-                        "Design and implement a persistence mechanism to save optimization goals to disk in a structured format (JSON/TOML) and load them on startup. This ensures goal progress isn't lost between agent restarts and enables long-term tracking of improvement history.",
-                        OptimizationCategory::General,
+                        "Design and implement a persistence mechanism to save optimization goals to disk in a structured format (JSON/TOML) and load them on startup. This ensures goal progress isn't lost between agent restarts and enables long-term tracking of improvement history."
                     );
-                    goal.priority = PriorityLevel::Critical;
-                    goal.affected_areas = vec!["src/core/persistence.rs".to_string(), "src/core/optimization.rs".to_string()];
+                    goal.category = OptimizationCategory::General;
+                    goal.priority = u8::from(PriorityLevel::Critical);
+                    goal.tags.push("file:src/core/persistence.rs".to_string());
+                    goal.tags.push("file:src/core/optimization.rs".to_string());
                     goal.success_metrics = vec![
                         "Goals persist between agent restarts".to_string(),
                         "Loading time < 100ms for up to 1000 goals".to_string(),
@@ -244,11 +285,11 @@ impl Agent {
                     let mut goal = OptimizationGoal::new(
                         "codegen-001",
                         "Enhance Prompt Templates for Code Generation",
-                        "Improve the LLM prompt templates for code generation to provide more context, constraints, and examples of desired output. Include Rust best practices, memory safety guidelines, and error handling patterns in the prompts to generate higher quality and more secure code.",
-                        OptimizationCategory::Performance,
+                        "Improve the LLM prompt templates for code generation to provide more context, constraints, and examples of desired output. Include Rust best practices, memory safety guidelines, and error handling patterns in the prompts to generate higher quality and more secure code."
                     );
-                    goal.priority = PriorityLevel::High;
-                    goal.affected_areas = vec!["src/code_generation/prompt.rs".to_string(), "src/code_generation/llm_generator.rs".to_string()];
+                    goal.priority = u8::from(PriorityLevel::High);
+                    goal.tags.push("file:src/code_generation/prompt.rs".to_string());
+                    goal.tags.push("file:src/code_generation/llm_generator.rs".to_string());
                     goal.success_metrics = vec![
                         "Reduction in rejected code changes by 50%".to_string(),
                         "Increase in test pass rate of generated code by 30%".to_string(),
@@ -262,11 +303,12 @@ impl Agent {
                     let mut goal = OptimizationGoal::new(
                         "testing-001",
                         "Implement Comprehensive Testing Framework",
-                        "Enhance the testing framework to include code linting, compilation validation, unit tests, integration tests, and performance benchmarks. The framework should provide detailed feedback on why tests failed to guide future improvement attempts.",
-                        OptimizationCategory::TestCoverage,
+                        "Enhance the testing framework to include code linting, compilation validation, unit tests, integration tests, and performance benchmarks. The framework should provide detailed feedback on why tests failed to guide future improvement attempts."
                     );
-                    goal.priority = PriorityLevel::High;
-                    goal.affected_areas = vec!["src/testing/test_runner.rs".to_string(), "src/testing/simple.rs".to_string()];
+                    goal.category = OptimizationCategory::TestCoverage;
+                    goal.priority = u8::from(PriorityLevel::High);
+                    goal.tags.push("file:src/testing/test_runner.rs".to_string());
+                    goal.tags.push("file:src/testing/simple.rs".to_string());
                     goal.success_metrics = vec![
                         "Complete test pipeline with 5+ validation stages".to_string(),
                         "Detailed error reports for failed tests".to_string(),
@@ -280,11 +322,12 @@ impl Agent {
                     let mut goal = OptimizationGoal::new(
                         "multi-llm-001",
                         "Implement Multi-LLM Architecture",
-                        "Refactor the LLM integration to support multiple specialized models for different tasks: code generation, ethics assessment, test validation, and planning. Each model should be optimized for its specific task with appropriate context windows and parameters.",
-                        OptimizationCategory::Performance,
+                        "Refactor the LLM integration to support multiple specialized models for different tasks: code generation, ethics assessment, test validation, and planning. Each model should be optimized for its specific task with appropriate context windows and parameters."
                     );
-                    goal.priority = PriorityLevel::Medium;
-                    goal.affected_areas = vec!["src/code_generation/llm_generator.rs".to_string(), "src/core/ethics.rs".to_string()];
+                    goal.category = OptimizationCategory::Performance;
+                    goal.priority = u8::from(PriorityLevel::Medium);
+                    goal.tags.push("file:src/code_generation/llm_generator.rs".to_string());
+                    goal.tags.push("file:src/core/ethics.rs".to_string());
                     goal.success_metrics = vec![
                         "Successful integration of 4+ specialized LLMs".to_string(),
                         "30%+ improvement in code quality via specialized models".to_string(),
@@ -298,11 +341,12 @@ impl Agent {
                     let mut goal = OptimizationGoal::new(
                         "resource-001",
                         "Implement Resource Usage Forecasting",
-                        "Create a sophisticated resource monitoring system that not only tracks current usage but predicts future resource needs based on planned operations. This forecasting should help prevent resource exhaustion and optimize scheduling of intensive tasks.",
-                        OptimizationCategory::Performance,
+                        "Create a sophisticated resource monitoring system that not only tracks current usage but predicts future resource needs based on planned operations. This forecasting should help prevent resource exhaustion and optimize scheduling of intensive tasks."
                     );
-                    goal.priority = PriorityLevel::Medium;
-                    goal.affected_areas = vec!["src/resource_monitor/forecasting.rs".to_string(), "src/resource_monitor/monitor.rs".to_string()];
+                    goal.category = OptimizationCategory::Performance;
+                    goal.priority = u8::from(PriorityLevel::Medium);
+                    goal.tags.push("file:src/resource_monitor/forecasting.rs".to_string());
+                    goal.tags.push("file:src/resource_monitor/monitor.rs".to_string());
                     goal.success_metrics = vec![
                         "Predict memory usage with 90%+ accuracy".to_string(),
                         "Predict CPU usage spikes 30+ seconds in advance".to_string(),
@@ -316,11 +360,11 @@ impl Agent {
                     let mut goal = OptimizationGoal::new(
                         "ethics-001",
                         "Enhanced Ethical Decision Framework",
-                        "Implement a more sophisticated ethical assessment system that can evaluate potential improvements across multiple ethical dimensions. The framework should consider safety, privacy, fairness, transparency, and alignment with human values.",
-                        OptimizationCategory::Security,
+                        "Implement a more sophisticated ethical assessment system that can evaluate potential improvements across multiple ethical dimensions. The framework should consider safety, privacy, fairness, transparency, and alignment with human values."
                     );
-                    goal.priority = PriorityLevel::High;
-                    goal.affected_areas = vec!["src/core/ethics.rs".to_string()];
+                    goal.category = OptimizationCategory::Security;
+                    goal.priority = u8::from(PriorityLevel::High);
+                    goal.tags.push("file:src/core/ethics.rs".to_string());
                     goal.success_metrics = vec![
                         "Multi-dimensional ethical scoring system".to_string(),
                         "Detailed reasoning for ethical decisions".to_string(),
@@ -414,17 +458,27 @@ impl Agent {
     async fn create_code_context(&self, goal: &OptimizationGoal) -> Result<crate::code_generation::generator::CodeContext> {
         use crate::code_generation::generator::CodeContext;
 
-        // Extract file paths from the goal
-        let file_paths = goal.affected_areas.clone();
+        // Get the file paths for the goal
+        let file_paths: Vec<String> = goal.tags.iter()
+            .filter(|tag| tag.starts_with("file:"))
+            .map(|tag| tag.trim_start_matches("file:").to_string())
+            .collect();
 
         // Create the context with the goal description as the task
         let context = CodeContext {
             task: goal.description.clone(),
-            file_paths,
+            file_paths: file_paths,
             requirements: Some(format!("Category: {}\nPriority: {}",
                 goal.category.to_string(),
                 goal.priority.to_string())),
             previous_attempts: Vec::new(), // For now, we don't track previous attempts
+            file_contents: None,
+            test_files: None,
+            test_contents: None,
+            dependencies: None,
+            code_structure: None,
+            max_attempts: Some(3),
+            current_attempt: Some(1),
         };
 
         Ok(context)
@@ -434,108 +488,185 @@ impl Agent {
     async fn apply_change(&self, goal: &OptimizationGoal, branch_name: &str, code: &str) -> Result<()> {
         info!("Applying change for goal {} to branch {}", goal.id, branch_name);
 
-        // Check if we have affected areas
-        if goal.affected_areas.is_empty() {
-            return Err(anyhow!("No affected areas specified for goal {}", goal.id));
-        }
-
         // Open the repository
         let repo = Repository::open(&self.working_dir)
             .context(format!("Failed to open repository at {:?}", self.working_dir))?;
 
-        // Get the target path
-        let target_path = Path::new(&goal.affected_areas[0]);
+        // Extract file changes from the LLM code response
+        let improvement_result = self.parse_code_changes(code)?;
 
-        // Make sure the directory exists
-        if let Some(parent) = target_path.parent() {
-            let parent_path = self.working_dir.join(parent);
-            std::fs::create_dir_all(&parent_path)
-                .context(format!("Failed to create directory: {:?}", parent_path))?;
+        if improvement_result.target_files.is_empty() {
+            return Err(anyhow!("No files to modify were identified in the code"));
         }
 
-        // Write the placeholder content
-        let placeholder_content = format!(
-            "// Generated improvement for goal: {}\n// Generated on: {}\n\n{}\n",
-            goal.id,
-            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"),
-            code.lines().take(20).collect::<Vec<&str>>().join("\n")
-        );
+        info!("Found {} file(s) to modify", improvement_result.target_files.len());
 
-        // Write to the file
-        let file_path = self.working_dir.join(target_path);
-        info!("Writing to file: {:?}", file_path);
-        std::fs::write(&file_path, placeholder_content)
-            .context(format!("Failed to write to file: {:?}", file_path))?;
+        // Apply each file change
+        for file_change in &improvement_result.target_files {
+            let target_path = Path::new(&file_change.file_path);
+            let full_path = self.working_dir.join(target_path);
 
-        // Stage the file
-        let mut index = repo.index()
-            .context("Failed to get repository index")?;
+            // Make sure the directory exists
+            if let Some(parent) = target_path.parent() {
+                let parent_path = self.working_dir.join(parent);
+                std::fs::create_dir_all(&parent_path)
+                    .context(format!("Failed to create directory: {:?}", parent_path))?;
+            }
 
-        // Since we're working directly in the repository, we can use the target_path directly
-        // which is already relative to the repository root
-        let relative_path_str = target_path.to_str()
-            .ok_or_else(|| anyhow!("Failed to convert path to string"))?;
+            // Write the content to the file
+            info!("Writing to file: {:?}", full_path);
+            std::fs::write(&full_path, &file_change.new_content)
+                .context(format!("Failed to write to file: {:?}", full_path))?;
 
-        info!("Adding file to index: {}", relative_path_str);
+            // Stage the file
+            let mut index = repo.index()
+                .context("Failed to get repository index")?;
 
-        // Add the file to the index
-        index.add_path(Path::new(relative_path_str))
-            .context(format!("Failed to add file to index: {}", relative_path_str))?;
+            // Get relative path
+            let relative_path_str = target_path.to_str()
+                .ok_or_else(|| anyhow!("Failed to convert path to string"))?;
 
-        index.write()
-            .context("Failed to write index")?;
+            info!("Adding file to index: {}", relative_path_str);
+            index.add_path(Path::new(relative_path_str))
+                .context(format!("Failed to add file to index: {}", relative_path_str))?;
 
-        // Create the commit
-        let tree_id = index.write_tree()
-            .context("Failed to write tree")?;
+            index.write().context("Failed to write index")?;
+        }
 
-        let tree = repo.find_tree(tree_id)
-            .context("Failed to find tree")?;
+        // Create a commit
+        let tree_id = repo.index().unwrap().write_tree().context("Failed to write tree")?;
+        let tree = repo.find_tree(tree_id).context("Failed to find tree")?;
 
-        // Create a signature for the commit
+        // Create signature
         let signature = Signature::now("Borg Agent", "borg@example.com")
             .context("Failed to create signature")?;
 
-        // Get the reference to the branch
-        let reference_name = format!("refs/heads/{}", branch_name);
+        // Create commit
+        let message = format!("Code improvement for goal: {}", goal.id);
+        let parent_commit = self.find_branch_commit(&repo, branch_name)?;
 
-        // Create the commit - handle the case where this might be the first commit in the branch
-        let commit_id = match repo.find_reference(&reference_name) {
-            Ok(reference) => {
-                // Get the parent commit from the reference
-                let parent_oid = reference.target()
-                    .context("Failed to get target from reference")?;
-
-                let parent_commit = repo.find_commit(parent_oid)
-                    .context("Failed to find parent commit")?;
-
-                // Create the commit with the parent
-                repo.commit(
-                    Some(&reference_name),
-                    &signature,
-                    &signature,
-                    &format!("Improvement for goal: {}", goal.id),
-                    &tree,
-                    &[&parent_commit]
-                ).context("Failed to create commit with parent")?
-            },
-            Err(e) => {
-                // This might be a new branch without commits, create without parent
-                warn!("Could not find reference for branch '{}': {}. Creating initial commit.", branch_name, e);
-                repo.commit(
-                    Some(&reference_name),
-                    &signature,
-                    &signature,
-                    &format!("Improvement for goal: {}", goal.id),
-                    &tree,
-                    &[] // No parents
-                ).context("Failed to create initial commit")?
-            }
+        // Create the commit with or without parent
+        let commit_id = if let Some(parent) = parent_commit {
+            repo.commit(
+                Some(&format!("refs/heads/{}", branch_name)),
+                &signature,
+                &signature,
+                &message,
+                &tree,
+                &[&parent],
+            ).context("Failed to create commit")?
+        } else {
+            repo.commit(
+                Some(&format!("refs/heads/{}", branch_name)),
+                &signature,
+                &signature,
+                &message,
+                &tree,
+                &[],
+            ).context("Failed to create commit")?
         };
 
-        info!("Created commit {} for improvement in branch '{}'", commit_id, branch_name);
-
+        info!("Successfully applied changes for goal {}", goal.id);
         Ok(())
+    }
+
+    /// Parse code changes from LLM response
+    fn parse_code_changes(&self, code: &str) -> Result<crate::code_generation::generator::CodeImprovement> {
+        // Create a code generator instance
+        let code_gen = self.code_generator.clone();
+
+        // Create a dummy context with the LLM code
+        let context = crate::code_generation::generator::CodeContext {
+            task: "Apply changes".to_string(),
+            requirements: None,
+            file_paths: vec![],
+            file_contents: None,
+            test_files: None,
+            test_contents: None,
+            code_structure: None,
+            previous_attempts: vec![],
+            max_attempts: None,
+            current_attempt: None,
+            dependencies: None,
+        };
+
+        // Extract file changes from the code
+        let improvement = crate::code_generation::generator::CodeImprovement {
+            id: uuid::Uuid::new_v4().to_string(),
+            task: "Apply changes".to_string(),
+            code: code.to_string(),
+            target_files: self.extract_file_changes(code)?,
+            explanation: "Changes applied from LLM response".to_string(),
+        };
+
+        Ok(improvement)
+    }
+
+    /// Extract file changes from code string
+    fn extract_file_changes(&self, code: &str) -> Result<Vec<crate::code_generation::generator::FileChange>> {
+        let re = regex::Regex::new(r"```(?:rust|rs)?\s*(?:\n|\r\n)([\s\S]*?)```").unwrap();
+        let mut changes = Vec::new();
+
+        // Let's start by looking for specific files called out with path comments
+        let file_re = regex::Regex::new(r#"(?i)for\s+file\s+(?:"|`)?([\w./\\-]+)(?:"|`)?|file:\s*(?:"|`)?([\w./\\-]+)(?:"|`)?|filename:\s*(?:"|`)?([\w./\\-]+)(?:"|`)?"#).unwrap();
+
+        for cap in re.captures_iter(code) {
+            let code_block = cap[1].to_string();
+            let mut file_path = String::new();
+
+            // Look for a file path in close proximity to this code block
+            // First check lines right before the code block
+            let code_start_index = code.find(&code_block).unwrap_or(0);
+            let pre_code = &code[..code_start_index];
+
+            // Look for the last file path mention before this code block
+            if let Some(file_cap) = file_re.captures_iter(pre_code).last() {
+                file_path = file_cap.get(1).or(file_cap.get(2)).or(file_cap.get(3))
+                    .map(|m| m.as_str().to_string())
+                    .unwrap_or_default();
+            }
+
+            // If no file path found, use a default
+            if file_path.is_empty() {
+                file_path = "src/main.rs".to_string();
+            }
+
+            changes.push(crate::code_generation::generator::FileChange {
+                file_path,
+                start_line: None,
+                end_line: None,
+                new_content: code_block,
+            });
+        }
+
+        if changes.is_empty() {
+            // If no code blocks found, try to look for file path mentions anyway
+            for cap in file_re.captures_iter(code) {
+                let file_path = cap.get(1).or(cap.get(2)).or(cap.get(3))
+                    .map(|m| m.as_str().to_string())
+                    .unwrap_or_default();
+                if !file_path.is_empty() {
+                    changes.push(crate::code_generation::generator::FileChange {
+                        file_path,
+                        start_line: None,
+                        end_line: None,
+                        new_content: "// File mentioned but no code provided".to_string(),
+                    });
+                }
+            }
+        }
+
+        // If still no changes found, create a default one
+        if changes.is_empty() {
+            changes.push(crate::code_generation::generator::FileChange {
+                file_path: "src/main.rs".to_string(),
+                start_line: None,
+                end_line: None,
+                new_content: "// No specific file identified, adding placeholder comment".to_string(),
+            });
+        }
+
+        Ok(changes)
     }
 
     /// Test a change in a branch
@@ -996,14 +1127,170 @@ impl Agent {
     async fn save_goals_to_disk(&self) -> Result<()> {
         info!("Saving optimization goals to disk");
 
-        match self.persistence_manager.save_optimization_manager(&self.optimization_manager).await {
-            Ok(_) => {
-                info!("Successfully saved goals to disk");
-                Ok(())
+        // Save optimization goals
+        self.persistence_manager.save_optimization_manager(&self.optimization_manager).await
+            .context("Failed to save optimization goals to disk")?;
+
+        info!("Successfully saved goals to disk");
+
+        // Also save the strategic plan
+        let planning_manager = self.strategic_planning_manager.lock().await;
+        planning_manager.save_to_disk().await?;
+
+        Ok(())
+    }
+
+    /// Get a reference to the strategic planning manager
+    pub fn get_strategic_planning_manager(&self) -> &Arc<Mutex<StrategicPlanningManager>> {
+        &self.strategic_planning_manager
+    }
+
+    /// Get a reference to the optimization manager
+    pub fn get_optimization_manager(&self) -> &Arc<Mutex<OptimizationManager>> {
+        &self.optimization_manager
+    }
+
+    /// Get a reference to the agent's configuration
+    pub fn get_config(&self) -> &Config {
+        &self.config
+    }
+
+    /// Register all available strategies with the strategy manager
+    async fn register_strategies(&self) -> Result<()> {
+        let mut strategy_manager = self.strategy_manager.lock().await;
+
+        // Register the code improvement strategy
+        let code_improvement_strategy = CodeImprovementStrategy::new(
+            self.working_dir.clone(),
+            self.code_generator.clone(),
+            self.test_runner.clone(),
+            self.git_manager.clone(),
+            self.authentication_manager.clone(),
+        );
+
+        strategy_manager.register_strategy(code_improvement_strategy);
+
+        info!("Registered {} strategies", strategy_manager.get_strategies().len());
+
+        Ok(())
+    }
+
+    /// Process an optimization goal using the appropriate strategy
+    async fn process_goal(&self, goal: OptimizationGoal) -> Result<()> {
+        info!("Processing optimization goal: {}", goal.id);
+
+        // Update goal status to in-progress
+        {
+            let mut optimization_manager = self.optimization_manager.lock().await;
+            if let Some(goal_mut) = optimization_manager.get_goal_mut(&goal.id) {
+                goal_mut.update_status(GoalStatus::InProgress);
+            }
+        }
+
+        // Check ethics first
+        let ethical = self.assess_goal_ethics(&mut goal.clone()).await?;
+        if !ethical {
+            warn!("Goal {} failed ethical assessment, skipping", goal.id);
+
+            // Update goal status to failed
+            self.update_goal_status(&goal.id, GoalStatus::Failed).await;
+            return Ok(());
+        }
+
+        // Use the strategy manager to create a plan
+        let plan = {
+            let mut strategy_manager = self.strategy_manager.lock().await;
+            match strategy_manager.create_plan(&goal).await {
+                Ok(plan) => plan,
+                Err(e) => {
+                    warn!("Failed to create plan for goal {}: {}", goal.id, e);
+                    self.update_goal_status(&goal.id, GoalStatus::Failed).await;
+                    return Ok(());
+                }
+            }
+        };
+
+        // Execute the plan
+        let result = {
+            let strategy_manager = self.strategy_manager.lock().await;
+            match strategy_manager.execute_plan(&plan).await {
+                Ok(result) => result,
+                Err(e) => {
+                    warn!("Failed to execute plan for goal {}: {}", goal.id, e);
+                    self.update_goal_status(&goal.id, GoalStatus::Failed).await;
+                    return Ok(());
+                }
+            }
+        };
+
+        // Update goal status based on the result
+        if result.success {
+            info!("Successfully completed goal {}", goal.id);
+            self.update_goal_status(&goal.id, GoalStatus::Completed).await;
+        } else {
+            warn!("Failed to complete goal {}: {}", goal.id, result.message);
+            self.update_goal_status(&goal.id, GoalStatus::Failed).await;
+        }
+
+        // Save goals to disk
+        self.save_goals_to_disk().await?;
+
+        Ok(())
+    }
+
+    /// Update the status of a goal
+    async fn update_goal_status(&self, goal_id: &str, status: GoalStatus) {
+        let mut optimization_manager = self.optimization_manager.lock().await;
+        if let Some(goal) = optimization_manager.get_goal_mut(goal_id) {
+            goal.update_status(status);
+        }
+    }
+
+    /// Get the available action types from all registered strategies
+    pub async fn get_available_action_types(&self) -> Vec<ActionType> {
+        let strategy_manager = self.strategy_manager.lock().await;
+        strategy_manager.get_available_action_types()
+    }
+
+    /// Get a list of all registered strategies
+    pub async fn get_registered_strategies(&self) -> Vec<String> {
+        let strategy_manager = self.strategy_manager.lock().await;
+        strategy_manager.get_strategies().into_iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Execute a specific plan
+    pub async fn execute_plan(&self, plan: &Plan) -> Result<bool> {
+        let strategy_manager = self.strategy_manager.lock().await;
+        let result = strategy_manager.execute_plan(plan).await?;
+        Ok(result.success)
+    }
+
+    /// Execute a specific step of a plan
+    pub async fn execute_step(&self, plan: &Plan, step_id: &str) -> Result<bool> {
+        let strategy_manager = self.strategy_manager.lock().await;
+        let result = strategy_manager.execute_step(plan, step_id).await?;
+        Ok(result.success)
+    }
+
+    /// Find the commit pointed to by a branch
+    fn find_branch_commit<'a>(&self, repo: &'a Repository, branch_name: &str) -> Result<Option<git2::Commit<'a>>> {
+        let reference_name = format!("refs/heads/{}", branch_name);
+
+        match repo.find_reference(&reference_name) {
+            Ok(reference) => {
+                // Get the target commit from the reference
+                let target_oid = reference.target()
+                    .context("Failed to get target from reference")?;
+
+                let commit = repo.find_commit(target_oid)
+                    .context("Failed to find commit")?;
+
+                Ok(Some(commit))
             },
-            Err(e) => {
-                error!("Failed to save goals to disk: {}", e);
-                Err(anyhow!("Failed to save goals to disk: {}", e))
+            Err(_) => {
+                // Branch might not exist yet
+                warn!("Could not find reference for branch '{}'. May be creating a new branch.", branch_name);
+                Ok(None)
             }
         }
     }
@@ -1052,141 +1339,127 @@ impl Agent {
 
         Ok(())
     }
+}
 
-    /// Process an optimization goal
-    async fn process_goal(&self, working_goal: OptimizationGoal) -> Result<()> {
-        info!("Processing optimization goal: {}", working_goal.id);
+/// Initialize the agent's components
+impl Agent {
+    /// Initialize the agent's components
+    pub async fn initialize(&self) -> Result<()> {
+        // Create data directories
+        let data_dir = self.working_dir.join("data");
+        fs::create_dir_all(&data_dir).context("Failed to create data directory")?;
 
-        // Update goal status to in-progress
+        // Initialize optimization goals from disk or create defaults
+        self.initialize_optimization_goals().await?;
+
+        // Initialize authentication manager
         {
-            let mut optimization_manager = self.optimization_manager.lock().await;
-            if let Some(goal) = optimization_manager.get_goal_mut(&working_goal.id) {
-                goal.update_status(GoalStatus::InProgress);
-            }
+            let _authentication_manager = self.authentication_manager.lock().await;
+            // No initialize method, nothing to do
         }
 
-        // Check ethics first
-        let ethical = self.assess_goal_ethics(&mut working_goal.clone()).await?;
-        if !ethical {
-            warn!("Goal {} failed ethical assessment, skipping", working_goal.id);
-
-            // Update goal status to failed
-            let mut optimization_manager = self.optimization_manager.lock().await;
-            if let Some(goal) = optimization_manager.get_goal_mut(&working_goal.id) {
-                goal.update_status(GoalStatus::Failed);
-            }
-
-            return Ok(());
+        // Initialize ethics manager
+        {
+            let _ethics = self.ethics_manager.lock().await;
+            // No initialize method, nothing to do
         }
 
-        // Generate code improvements
-        let code_changes = match self.generate_improvement(&working_goal).await {
-            Ok(changes) => changes,
-            Err(e) => {
-                warn!("Failed to generate improvement for goal {}: {}", working_goal.id, e);
-
-                // Update goal status to failed
-                let mut optimization_manager = self.optimization_manager.lock().await;
-                if let Some(goal) = optimization_manager.get_goal_mut(&working_goal.id) {
-                    goal.update_status(GoalStatus::Failed);
-                }
-
-                return Ok(());
-            }
-        };
-
-        // Create a branch name for this improvement
-        // Replace spaces with underscores to avoid issues with Git branch names
-        let category_slug = working_goal.category.to_string().to_lowercase().replace(' ', "_");
-        let branch_name = format!("improvement/{}/{}", category_slug, working_goal.id);
-
-        // Apply the changes to a branch
-        match self.apply_change(&working_goal, &branch_name, &code_changes).await {
-            Ok(()) => {
-                info!("Successfully applied changes for goal {} in branch {}", working_goal.id, branch_name);
-            },
-            Err(e) => {
-                warn!("Failed to apply changes for goal {}: {}", working_goal.id, e);
-
-                // Update goal status to failed
-                let mut optimization_manager = self.optimization_manager.lock().await;
-                if let Some(goal) = optimization_manager.get_goal_mut(&working_goal.id) {
-                    goal.update_status(GoalStatus::Failed);
-                }
-
-                return Ok(());
-            }
-        };
-
-        // Test the changes
-        let tests_passed = match self.test_change(&branch_name).await {
-            Ok(passed) => passed,
-            Err(e) => {
-                warn!("Failed to test changes for goal {}: {}", working_goal.id, e);
-
-                // Update goal status to failed
-                let mut optimization_manager = self.optimization_manager.lock().await;
-                if let Some(goal) = optimization_manager.get_goal_mut(&working_goal.id) {
-                    goal.update_status(GoalStatus::Failed);
-                }
-
-                return Ok(());
-            }
-        };
-
-        // Evaluate the results
-        let should_merge = match self.evaluate_results(&working_goal, &branch_name, tests_passed).await {
-            Ok(should_merge) => should_merge,
-            Err(e) => {
-                warn!("Failed to evaluate results for goal {}: {}", working_goal.id, e);
-
-                // Update goal status to failed
-                let mut optimization_manager = self.optimization_manager.lock().await;
-                if let Some(goal) = optimization_manager.get_goal_mut(&working_goal.id) {
-                    goal.update_status(GoalStatus::Failed);
-                }
-
-                return Ok(());
-            }
-        };
-
-        // Merge the changes if successful
-        if should_merge {
-            match self.merge_change(&mut working_goal.clone(), &branch_name).await {
-                Ok(_) => {
-                    info!("Successfully completed goal {}", working_goal.id);
-
-                    // Update goal status to completed
-                    let mut optimization_manager = self.optimization_manager.lock().await;
-                    if let Some(goal) = optimization_manager.get_goal_mut(&working_goal.id) {
-                        goal.update_status(GoalStatus::Completed);
-                    }
-                },
-                Err(e) => {
-                    error!("Failed to merge changes for goal {}: {}", working_goal.id, e);
-
-                    // Update goal status to failed
-                    let mut optimization_manager = self.optimization_manager.lock().await;
-                    if let Some(goal) = optimization_manager.get_goal_mut(&working_goal.id) {
-                        goal.update_status(GoalStatus::Failed);
-                    }
-                }
-            }
-        } else {
-            warn!("Changes for goal {} did not pass evaluation, not merging", working_goal.id);
-
-            // Update goal status to failed
-            let mut optimization_manager = self.optimization_manager.lock().await;
-            if let Some(goal) = optimization_manager.get_goal_mut(&working_goal.id) {
-                goal.update_status(GoalStatus::Failed);
-            }
+        // Initialize version control
+        {
+            let _vc = self.git_manager.lock().await;
+            // No initialize method, nothing to do
         }
 
-        // At the end after updating goal status
-        // Save goals to disk after every goal processing
-        // to ensure we don't lose progress
-        self.save_goals_to_disk().await?;
+        // Load strategic planning data
+        {
+            let mut planning_manager = self.strategic_planning_manager.lock().await;
+            planning_manager.load_from_disk().await?;
+        }
+
+        info!("Agent initialized successfully");
 
         Ok(())
+    }
+
+    /// Run a single improvement iteration
+    pub async fn run_improvement_iteration(&self) -> Result<()> {
+        info!("Starting improvement iteration");
+
+        // Find an optimization goal to work on
+        let goal = match self.identify_next_goal().await? {
+            Some(g) => g,
+            None => {
+                info!("No suitable optimization goals available");
+                return Ok(());
+            }
+        };
+
+        // Process this goal
+        match self.process_goal(goal).await {
+            Ok(_) => {
+                info!("Successfully processed goal");
+            }
+            Err(e) => {
+                error!("Failed to process goal: {}", e);
+            }
+        }
+
+        // Save updated goals to disk
+        self.save_goals_to_disk().await?;
+
+        info!("Completed improvement iteration");
+
+        Ok(())
+    }
+
+    /// Add a strategic objective
+    pub async fn add_strategic_objective(&self,
+        id: &str,
+        title: &str,
+        description: &str,
+        timeframe: u32,
+        creator: &str,
+        key_results: Vec<String>,
+        constraints: Vec<String>
+    ) -> Result<()> {
+        let mut planning_manager = self.strategic_planning_manager.lock().await;
+
+        let objective = StrategicObjective::new(id, title, description, timeframe, creator)
+            .with_key_results(key_results)
+            .with_constraints(constraints);
+
+        planning_manager.add_objective(objective.clone());
+
+        // Clone the objective to avoid borrowing issues
+        drop(planning_manager);
+
+        // Generate milestones for this objective in a separate transaction
+        let mut planning_manager = self.strategic_planning_manager.lock().await;
+
+        let milestones = planning_manager.generate_milestones_for_objective(&objective).await?;
+
+        for milestone in milestones {
+            planning_manager.add_milestone(milestone);
+        }
+
+        // Save the strategic plan
+        planning_manager.save_to_disk().await?;
+
+        info!("Added strategic objective: {} with {} key results and {} constraints",
+            id, objective.key_results.len(), objective.constraints.len());
+
+        Ok(())
+    }
+
+    /// Generate a report on the strategic plan
+    pub async fn generate_strategic_plan_report(&self) -> Result<String> {
+        let planning_manager = self.strategic_planning_manager.lock().await;
+        planning_manager.generate_progress_report().await
+    }
+
+    /// Visualize the strategic plan
+    pub async fn visualize_strategic_plan(&self) -> Result<String> {
+        let planning_manager = self.strategic_planning_manager.lock().await;
+        planning_manager.generate_planning_visualization()
     }
 }

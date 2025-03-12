@@ -1,12 +1,23 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use log::info;
 use std::sync::Arc;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
+use regex::Regex;
+use tokio::sync::Mutex;
+use std::collections::HashMap;
 
 use crate::code_generation::generator::{CodeContext, CodeGenerator, CodeImprovement, FileChange, PreviousAttempt};
 use crate::code_generation::llm::{LlmFactory, LlmProvider};
 use crate::code_generation::prompt::PromptManager;
-use crate::core::config::LlmConfig;
+use crate::code_generation::llm_tool::{
+    LlmTool, ToolCall, ToolResult, ToolRegistry,
+    CodeSearchTool, FileContentsTool, FindTestsTool,
+    DirectoryExplorationTool, GitHistoryTool, CompilationFeedbackTool,
+    CreateFileTool, ModifyFileTool
+};
+use crate::core::config::{LlmConfig, CodeGenerationConfig, LlmLoggingConfig};
 use crate::version_control::git::GitManager;
 
 /// A code generator that uses LLM to generate code improvements
@@ -18,167 +29,421 @@ pub struct LlmCodeGenerator {
     prompt_manager: PromptManager,
 
     /// The git manager for retrieving code
-    git_manager: Arc<tokio::sync::Mutex<dyn GitManager>>,
+    git_manager: Arc<Mutex<dyn GitManager>>,
+
+    /// The workspace path
+    workspace: PathBuf,
+
+    /// Maximum number of iterations for tool usage
+    max_tool_iterations: usize,
+
+    /// Whether to use tools for code generation
+    use_tools: bool,
+
+    /// Registry of available tools
+    tool_registry: ToolRegistry,
 }
 
 impl LlmCodeGenerator {
     /// Create a new LLM code generator
-    pub fn new(llm_config: LlmConfig, git_manager: Arc<tokio::sync::Mutex<dyn GitManager>>) -> Result<Self> {
-        let llm = LlmFactory::create(llm_config)
+    pub fn new(llm_config: LlmConfig, code_gen_config: CodeGenerationConfig, llm_logging_config: LlmLoggingConfig, git_manager: Arc<Mutex<dyn GitManager>>, workspace: PathBuf) -> Result<Self> {
+        let llm = LlmFactory::create(llm_config, llm_logging_config)
             .context("Failed to create LLM provider")?;
 
         let prompt_manager = PromptManager::new();
+
+        // Use configuration values or defaults
+        let max_tool_iterations = code_gen_config.max_tool_iterations;
+        let use_tools = code_gen_config.use_tools;
+
+        // Initialize tool registry
+        let mut tool_registry = ToolRegistry::new();
+
+        // Register available tools
+        tool_registry.register(CodeSearchTool::new(workspace.clone(), Arc::clone(&git_manager)));
+        tool_registry.register(FileContentsTool::new(workspace.clone()));
+        tool_registry.register(FindTestsTool::new(workspace.clone()));
+        tool_registry.register(DirectoryExplorationTool::new(workspace.clone()));
+        tool_registry.register(GitHistoryTool::new(workspace.clone(), Arc::clone(&git_manager)));
+        tool_registry.register(CompilationFeedbackTool::new(workspace.clone()));
+        tool_registry.register(CreateFileTool::new(workspace.clone()));
+        tool_registry.register(ModifyFileTool::new(workspace.clone()));
 
         Ok(Self {
             llm,
             prompt_manager,
             git_manager,
+            workspace,
+            max_tool_iterations,
+            use_tools,
+            tool_registry,
         })
     }
 
     /// Extract code from LLM response
     fn extract_code_from_response(&self, response: &str) -> Result<Vec<FileChange>> {
-        // Basic implementation - in a real system this would be more robust
-        let mut file_changes = Vec::new();
+        let re = Regex::new(r"```(?:rust|rs)?\s*(?:\n|\r\n)([\s\S]*?)```").unwrap();
+        let mut changes = Vec::new();
 
-        // Split the response by file markers and code blocks
-        let mut current_file = None;
-        let mut in_code_block = false;
-        let mut code = String::new();
+        // Let's start by looking for specific files called out with path comments
+        let file_re = Regex::new(r#"(?i)for\s+file\s+(?:"|`)?([\w./\\-]+)(?:"|`)?|file:\s*(?:"|`)?([\w./\\-]+)(?:"|`)?|filename:\s*(?:"|`)?([\w./\\-]+)(?:"|`)?"#).unwrap();
 
-        for line in response.lines() {
-            let trimmed = line.trim();
+        for cap in re.captures_iter(response) {
+            let code_block = cap[1].to_string();
+            let mut file_path = String::new();
 
-            // Look for file path indicators (common patterns in LLM responses)
-            if trimmed.starts_with("File:") || trimmed.starts_with("```") && trimmed.contains(".rs") {
-                // If we were already processing a file, save it
-                if in_code_block && current_file.is_some() {
-                    file_changes.push(FileChange {
-                        file_path: current_file.take().unwrap(),
-                        start_line: None, // We don't have line information from the LLM
-                        end_line: None,
-                        new_content: code.clone(),
-                    });
-                    code.clear();
-                }
+            // Look for a file path in close proximity to this code block
+            // First check lines right before the code block
+            let code_start_index = response.find(&code_block).unwrap_or(0);
+            let pre_code = &response[..code_start_index];
 
-                // Extract file path
-                if trimmed.starts_with("File:") {
-                    current_file = Some(trimmed.trim_start_matches("File:").trim().to_string());
-                } else if trimmed.starts_with("```") && trimmed.contains(".rs") {
-                    // Extract from code block markers with filename
-                    let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                    if parts.len() >= 2 && parts[1].ends_with(".rs") {
-                        current_file = Some(parts[1].to_string());
-                    }
-                }
-
-                in_code_block = true;
-                continue;
+            // Look for the last file path mention before this code block
+            if let Some(file_cap) = file_re.captures_iter(pre_code).last() {
+                file_path = file_cap.get(1).or(file_cap.get(2)).or(file_cap.get(3))
+                    .map(|m| m.as_str().to_string())
+                    .unwrap_or_default();
             }
 
-            // End of code block
-            if trimmed == "```" && in_code_block {
-                if let Some(file) = current_file.take() {
-                    file_changes.push(FileChange {
-                        file_path: file,
-                        start_line: None,
-                        end_line: None,
-                        new_content: code.clone(),
-                    });
-                    code.clear();
-                }
-                in_code_block = false;
-                continue;
+            // If no file path found, use a default
+            if file_path.is_empty() {
+                file_path = "src/main.rs".to_string();
             }
 
-            // Collect code content
-            if in_code_block && current_file.is_some() {
-                code.push_str(line);
-                code.push('\n');
-            }
-        }
-
-        // Handle any remaining code
-        if in_code_block && current_file.is_some() {
-            file_changes.push(FileChange {
-                file_path: current_file.take().unwrap(),
+            changes.push(FileChange {
+                file_path,
                 start_line: None,
                 end_line: None,
-                new_content: code,
+                new_content: code_block,
             });
         }
 
-        Ok(file_changes)
-    }
-
-    /// Fetch code content for the given file paths
-    async fn fetch_code_content(&self, file_paths: &[String]) -> Result<String> {
-        let mut content = String::new();
-
-        let git_manager = self.git_manager.lock().await;
-
-        for file_path in file_paths {
-            let file_content = match git_manager.read_file(file_path).await {
-                Ok(content) => content,
-                Err(e) => {
-                    log::warn!("Failed to read file {}: {}. Assuming it's a new file.", file_path, e);
-                    format!("// This is a new file that needs to be created: {}", file_path)
+        if changes.is_empty() {
+            // If no code blocks found, try to look for file path mentions anyway
+            for cap in file_re.captures_iter(response) {
+                let file_path = cap.get(1).or(cap.get(2)).or(cap.get(3))
+                    .map(|m| m.as_str().to_string())
+                    .unwrap_or_default();
+                if !file_path.is_empty() {
+                    changes.push(FileChange {
+                        file_path,
+                        start_line: None,
+                        end_line: None,
+                        new_content: "// File mentioned but no code provided".to_string(),
+                    });
                 }
-            };
-
-            content.push_str(&format!("### FILE: {}\n", file_path));
-            content.push_str("```rust\n");
-            content.push_str(&file_content);
-            content.push_str("\n```\n\n");
+            }
         }
 
-        Ok(content)
+        Ok(changes)
+    }
+
+    /// Fetch code content from Git
+    async fn fetch_code_content(&self, file_path: &str) -> Result<String> {
+        let git_manager = self.git_manager.lock().await;
+        match git_manager.read_file(file_path).await {
+            Ok(content) => Ok(content),
+            Err(e) => {
+                info!("Failed to read file {}: {}", file_path, e);
+                Ok(format!("// File {} does not exist or cannot be read", file_path))
+            }
+        }
+    }
+
+    /// Extract tool calls from LLM response
+    fn extract_tool_calls(&self, response: &str) -> Vec<ToolCall> {
+        let mut tool_calls = Vec::new();
+
+        // Look for JSON-formatted tool calls
+        let re = Regex::new(r#"\{(?:\s*)"tool"(?:\s*):(?:\s*)"([^"]+)"(?:\s*),(?:\s*)"args"(?:\s*):(?:\s*)\[(.*?)\](?:\s*)\}"#).unwrap();
+
+        for cap in re.captures_iter(response) {
+            let tool_name = cap[1].to_string();
+            let args_json = format!("[{}]", &cap[2]);
+
+            if let Ok(args) = serde_json::from_str::<Vec<String>>(&args_json) {
+                tool_calls.push(ToolCall {
+                    tool: tool_name,
+                    args,
+                });
+            }
+        }
+
+        // Look for more relaxed format (non-JSON)
+        let alt_re = Regex::new(r"(?i)use\s+tool\s+([a-z_]+)(?:\s*):(?:\s*)(.+?)(?:\n|$)").unwrap();
+        for cap in alt_re.captures_iter(response) {
+            let tool_name = cap[1].to_string();
+            let args_text = cap[2].trim();
+
+            // Simple parsing of comma-separated arguments
+            let args = args_text.split(',')
+                .map(|s| s.trim().trim_matches(|c| c == '\'' || c == '"').to_string())
+                .collect();
+
+            tool_calls.push(ToolCall {
+                tool: tool_name,
+                args,
+            });
+        }
+
+        tool_calls
+    }
+
+    /// Generate with tools in a conversational format
+    async fn generate_with_tools(&self, context: &CodeContext) -> Result<String> {
+        // Create initial prompt with tool instructions
+        let mut conversation = String::new();
+
+        // System message with tool instructions
+        let mut tool_descriptions = String::new();
+        // Use detailed tool specifications instead of simple descriptions
+        for (name, description, params) in self.tool_registry.get_tool_specifications() {
+            tool_descriptions.push_str(&format!("- {}: {}\n", name, description));
+
+            // Add parameter details if there are any
+            if !params.is_empty() {
+                tool_descriptions.push_str("  Parameters:\n");
+                for param in params {
+                    let required_str = if param.required { "required" } else { "optional" };
+                    let default_str = if let Some(default) = &param.default_value {
+                        format!(" (default: {})", default)
+                    } else {
+                        String::new()
+                    };
+
+                    tool_descriptions.push_str(&format!(
+                        "    - {}: {} [{}]{}\n",
+                        param.name,
+                        param.description,
+                        required_str,
+                        default_str
+                    ));
+                }
+            }
+        }
+
+        let system_message = format!(
+            "You are a skilled Rust programmer tasked with implementing code improvements. \
+            You have access to the following tools to explore and understand the codebase:\n\n{}\n\n\
+            To use a tool, output JSON in the format:\n{{\"tool\": \"tool_name\", \"args\": [\"arg1\", \"arg2\"]}}\n\n\
+            Always provide arguments in the order specified above. Required parameters must always be provided.\n\n\
+            IMPORTANT: You can make multiple tool calls in a single response. Just include multiple tool call objects in your response.\n\
+            For example:\n\
+            {{\"tool\": \"file_contents\", \"args\": [\"src/main.rs\"]}}\n\
+            {{\"tool\": \"code_search\", \"args\": [\"important_function\"]}}\n\n\
+            IMPORTANT: You can decide which files to create or modify using the 'create_file' and 'modify_file' tools.\n\
+            - Use 'create_file' to create new files (will fail if file already exists)\n\
+            - Use 'modify_file' to modify existing files (entire file or specific line ranges)\n\n\
+            After exploring the codebase with tools, make your code changes using these tools.\n\
+            You DON'T need to wait for the human to tell you which files to modify - decide for yourself \
+            based on your understanding of the codebase and the requested changes.",
+            tool_descriptions
+        );
+
+        // Task description
+        let task = if let Some(requirements) = &context.requirements {
+            format!("## Task:\n{}\n\n## Requirements:\n{}\n\n", context.task, requirements)
+        } else {
+            format!("## Task:\n{}\n\n", context.task)
+        };
+
+        // Add file paths
+        let files_section = if !context.file_paths.is_empty() {
+            format!("## Files to modify:\n{}\n\n", context.file_paths.join("\n"))
+        } else {
+            String::new()
+        };
+
+        // Add previous attempts if any
+        let attempts_section = if !context.previous_attempts.is_empty() {
+            let mut s = String::from("## Previous Attempts:\n\n");
+            for (i, attempt) in context.previous_attempts.iter().enumerate() {
+                s.push_str(&format!("### Attempt {}:\n", i + 1));
+                s.push_str(&format!("```rust\n{}\n```\n", attempt.code));
+                s.push_str(&format!("Failure reason: {}\n\n", attempt.failure_reason));
+
+                if let Some(test_results) = &attempt.test_results {
+                    s.push_str(&format!("Test results:\n{}\n\n", test_results));
+                }
+            }
+            s
+        } else {
+            String::new()
+        };
+
+        // Initialize conversation
+        conversation.push_str(&system_message);
+        conversation.push_str("\n\n");
+        conversation.push_str(&task);
+        conversation.push_str(&files_section);
+        conversation.push_str(&attempts_section);
+
+        let mut final_response = String::new();
+
+        // Iterative conversation with tool usage
+        for iteration in 0..self.max_tool_iterations {
+            info!("Tool iteration {}/{}", iteration + 1, self.max_tool_iterations);
+
+            // Generate a response
+            let response = self.llm.generate(&conversation, Some(2048), Some(0.4)).await?;
+
+            // Check if the response contains tool calls
+            let tool_calls = self.extract_tool_calls(&response);
+
+            if tool_calls.is_empty() {
+                // No tool calls, so this is the final response
+                final_response = response;
+                break;
+            }
+
+            // Add the response to the conversation
+            conversation.push_str(&format!("\n\nYou: {}\n\n", response));
+
+            // Process each tool call in sequence
+            for tool_call in tool_calls {
+                info!("Tool call detected: {} with {} args", tool_call.tool, tool_call.args.len());
+
+                // Execute the tool
+                let tool_result = self.tool_registry.execute(&tool_call).await;
+
+                // Add the result to the conversation
+                if tool_result.success {
+                    conversation.push_str(&format!("Tool result for {}:\n{}\n\n",
+                        tool_call.tool,
+                        tool_result.result
+                    ));
+                } else {
+                    conversation.push_str(&format!("Tool error for {}: {}\n\n",
+                        tool_call.tool,
+                        tool_result.error.unwrap_or_else(|| "Unknown error".to_string())
+                    ));
+                }
+            }
+        }
+
+        if final_response.is_empty() {
+            final_response = format!(
+                "After {} tool iterations, no final response was generated. \
+                 Please provide your code implementation now based on the information gathered.",
+                self.max_tool_iterations
+            );
+
+            // Generate one more time to get a final response
+            final_response = self.llm.generate(&(conversation + &final_response), Some(4096), Some(0.4)).await?;
+        }
+
+        Ok(final_response)
+    }
+
+    /// Enhance the context with additional information
+    async fn enhance_context(&self, context: &mut CodeContext) -> Result<()> {
+        // Add file contents if not already present
+        if context.file_contents.is_none() && !context.file_paths.is_empty() {
+            let mut file_contents = HashMap::new();
+            let git_manager = self.git_manager.lock().await;
+
+            for file_path in &context.file_paths {
+                if let Ok(content) = git_manager.read_file(file_path).await {
+                    file_contents.insert(file_path.clone(), content);
+                }
+            }
+
+            context.file_contents = Some(file_contents);
+        }
+
+        // Find related test files if not already present
+        if context.test_files.is_none() && !context.file_paths.is_empty() {
+            let mut test_files = Vec::new();
+            let find_tests_tool = FindTestsTool::new(self.workspace.clone());
+
+            for file_path in &context.file_paths {
+                let result = find_tests_tool.execute(&[file_path]).await;
+                if let Ok(result) = result {
+                    if !result.contains("No test files found") {
+                        // Extract test file names from the result
+                        let re = Regex::new(r"- (tests/[^\n]+|src/[^\n]+)").unwrap();
+                        for cap in re.captures_iter(&result) {
+                            test_files.push(cap[1].to_string());
+                        }
+                    }
+                }
+            }
+
+            context.test_files = Some(test_files);
+        }
+
+        // Add test contents if not already present
+        if context.test_contents.is_none() && context.test_files.is_some() {
+            let mut test_contents = HashMap::new();
+            let git_manager = self.git_manager.lock().await;
+
+            if let Some(test_files) = &context.test_files {
+                for file_path in test_files {
+                    if let Ok(content) = git_manager.read_file(file_path).await {
+                        test_contents.insert(file_path.clone(), content);
+                    }
+                }
+            }
+
+            context.test_contents = Some(test_contents);
+        }
+
+        Ok(())
     }
 }
 
 #[async_trait]
 impl CodeGenerator for LlmCodeGenerator {
     async fn generate_improvement(&self, context: &CodeContext) -> Result<CodeImprovement> {
-        // Fetch content of all relevant files
-        let current_code = self.fetch_code_content(&context.file_paths).await?;
+        // Enhancement: Use stored flag instead of hard-coded value
+        let use_tools = self.use_tools && context.current_attempt.unwrap_or(1) > 0;
 
-        // Determine the appropriate prompt type based on the task description
-        let prompt = if context.task.to_lowercase().contains("bug") || context.task.to_lowercase().contains("fix") {
-            log::info!("Using bugfix prompt for task: {}", context.task);
-            self.prompt_manager.create_bugfix_prompt(context, &current_code)
-        } else if context.task.to_lowercase().contains("feature") || context.task.to_lowercase().contains("implement") || context.task.to_lowercase().contains("add") {
-            log::info!("Using feature prompt for task: {}", context.task);
-            self.prompt_manager.create_feature_prompt(context, &current_code)
-        } else if context.task.to_lowercase().contains("refactor") || context.task.to_lowercase().contains("restructure") || context.task.to_lowercase().contains("simplify") {
-            log::info!("Using refactor prompt for task: {}", context.task);
-            self.prompt_manager.create_refactor_prompt(context, &current_code)
+        // Create a mutable copy of the context that we can enhance
+        let mut enhanced_context = context.clone();
+
+        // Enhance the context with additional information
+        self.enhance_context(&mut enhanced_context).await?;
+
+        let response = if use_tools {
+            info!("Using interactive tool-based approach for code generation");
+            self.generate_with_tools(&enhanced_context).await?
         } else {
-            log::info!("Using general improvement prompt for task: {}", context.task);
-            self.prompt_manager.create_improvement_prompt(context, &current_code)
-        };
+            // Standard approach for first attempt
+            info!("Using standard approach for code generation");
 
-        log::debug!("Generated prompt for LLM: \n{}", prompt);
+            // Fetch content of all relevant files
+            let current_code = self.fetch_code_content(&context.file_paths.first().unwrap()).await?;
 
-        // Ask the LLM with appropriate parameters based on the task
-        let max_tokens = Some(4096); // Increased token limit for more detailed responses
-        let temperature = if context.task.to_lowercase().contains("bug") || context.task.to_lowercase().contains("fix") {
-            // Lower temperature for bug fixes to get more deterministic outputs
-            Some(0.2)
-        } else if context.task.to_lowercase().contains("feature") || context.task.to_lowercase().contains("innovative") {
-            // Higher temperature for features to encourage creativity
-            Some(0.7)
-        } else {
-            // Balanced temperature for most improvements
-            Some(0.4)
-        };
+            // Determine the appropriate prompt type based on the task description
+            let prompt = if context.task.to_lowercase().contains("bug") || context.task.to_lowercase().contains("fix") {
+                info!("Using bugfix prompt for task: {}", context.task);
+                self.prompt_manager.create_bugfix_prompt(context, &current_code)
+            } else if context.task.to_lowercase().contains("feature") || context.task.to_lowercase().contains("implement") || context.task.to_lowercase().contains("add") {
+                info!("Using feature prompt for task: {}", context.task);
+                self.prompt_manager.create_feature_prompt(context, &current_code)
+            } else if context.task.to_lowercase().contains("refactor") || context.task.to_lowercase().contains("restructure") || context.task.to_lowercase().contains("simplify") {
+                info!("Using refactor prompt for task: {}", context.task);
+                self.prompt_manager.create_refactor_prompt(context, &current_code)
+            } else {
+                info!("Using general improvement prompt for task: {}", context.task);
+                self.prompt_manager.create_improvement_prompt(context, &current_code)
+            };
 
-        let response = match self.llm.generate(&prompt, max_tokens, temperature).await {
-            Ok(resp) => resp,
-            Err(e) => {
-                log::error!("LLM API error: {}", e);
-                return Err(anyhow::anyhow!("Failed to generate code improvement: {}", e));
-            }
+            info!("Generated prompt with length: {} characters", prompt.len());
+
+            // Ask the LLM with appropriate parameters based on the task
+            let max_tokens = Some(4096); // Increased token limit for more detailed responses
+            let temperature = if context.task.to_lowercase().contains("bug") || context.task.to_lowercase().contains("fix") {
+                // Lower temperature for bug fixes to get more deterministic outputs
+                Some(0.2)
+            } else if context.task.to_lowercase().contains("feature") || context.task.to_lowercase().contains("innovative") {
+                // Higher temperature for features to encourage creativity
+                Some(0.7)
+            } else {
+                // Balanced temperature for most improvements
+                Some(0.4)
+            };
+
+            self.llm.generate(&prompt, max_tokens, temperature).await?
         };
 
         // Extract code changes from the response
@@ -211,7 +476,7 @@ impl CodeGenerator for LlmCodeGenerator {
         // In a real system, we might store this feedback for future reference
         // or use it to fine-tune the LLM
 
-        log::info!(
+        info!(
             "Feedback for improvement {}: Success={}, Feedback={}",
             improvement.id,
             success,

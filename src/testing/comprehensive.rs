@@ -224,6 +224,12 @@ impl ComprehensiveTestRunner {
             output: combined_output,
             duration,
             metrics,
+            report: None,
+            failures: None,
+            compilation_errors: None,
+            exit_code: Some(output.status.code().unwrap_or(0)),
+            branch: Some(branch.to_string()),
+            test_stage: Some(stage.to_string()),
         })
     }
 
@@ -587,6 +593,12 @@ impl TestRunner for ComprehensiveTestRunner {
             metrics: comprehensive_result.stage_results.iter()
                 .find(|r| r.stage == TestStage::UnitTests)
                 .and_then(|r| r.result.metrics.clone()),
+            report: None,
+            failures: None,
+            compilation_errors: None,
+            exit_code: None,
+            branch: Some(branch.to_string()),
+            test_stage: Some("comprehensive".to_string()),
         })
     }
 

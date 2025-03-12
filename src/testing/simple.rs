@@ -133,51 +133,46 @@ impl TestRunner for SimpleTestRunner {
             output: combined_output,
             duration,
             metrics,
+            report: None,
+            failures: None,
+            compilation_errors: None,
+            exit_code: Some(output.status.code().unwrap_or(-1)),
+            branch: Some(branch.to_string()),
+            test_stage: Some("unit".to_string()),
         })
     }
 
     async fn run_benchmark(&self, branch: &str, target_path: Option<&Path>) -> Result<TestResult> {
         info!("Running benchmarks on branch {} with SimpleTestRunner", branch);
 
+        let target_dir = target_path.map(|p| p.to_path_buf()).unwrap_or_else(|| self.workspace.clone());
         let start_time = Instant::now();
 
-        // Determine the target directory
-        let target_dir = match target_path {
-            Some(path) => path.to_path_buf(),
-            None => self.workspace.clone(),
-        };
-
-        // Build the command
-        let mut cmd = Command::new("cargo");
-        cmd.current_dir(&target_dir)
-            .arg("bench")
-            .arg("--color=always");
-
-        // Run the command
-        let output = match cmd.output() {
-            Ok(output) => output,
-            Err(e) => {
-                return Err(anyhow::anyhow!(BorgError::TestingError(format!(
-                    "Failed to run cargo bench: {}", e
-                ))));
-            }
-        };
+        let output = Command::new("cargo")
+            .current_dir(&target_dir)
+            .args(&["bench"])
+            .output()
+            .context("Failed to run benchmarks")?;
 
         let duration = start_time.elapsed();
+        let success = output.status.success();
+        let exit_code = output.status.code().unwrap_or(-1);
 
-        // Convert output to string
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let combined_output = format!("{}\n{}", stdout, stderr);
-
-        // Determine if benchmarks ran successfully based on exit status
-        let success = output.status.success();
+        let combined_output = format!("STDOUT:\n{}\n\nSTDERR:\n{}", stdout, stderr);
 
         Ok(TestResult {
             success,
             output: combined_output,
             duration,
-            metrics: None, // Benchmarks don't provide the same metrics as tests
+            metrics: None,
+            report: None,
+            failures: None,
+            compilation_errors: None,
+            exit_code: Some(exit_code),
+            branch: Some(branch.to_string()),
+            test_stage: Some("benchmark".to_string()),
         })
     }
 }

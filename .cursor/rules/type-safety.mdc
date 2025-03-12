@@ -4,5 +4,5 @@ globs:
 alwaysApply: false
 ---
 ## Type Safety
-- Always use TypeScript for new modules.
+- Always use typing.
 - Define explicit types for all function parameters and return values.

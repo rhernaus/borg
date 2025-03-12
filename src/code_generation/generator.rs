@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use anyhow::Result;
+use std::time::Duration;
 
 /// A trait representing a code generator that can propose code improvements
 #[async_trait]
@@ -39,6 +40,27 @@ pub struct CodeContext {
 
     /// Previous attempts that didn't work (if any)
     pub previous_attempts: Vec<PreviousAttempt>,
+
+    /// File contents keyed by file path
+    pub file_contents: Option<std::collections::HashMap<String, String>>,
+
+    /// Related test files if any
+    pub test_files: Option<Vec<String>>,
+
+    /// Test file contents keyed by file path
+    pub test_contents: Option<std::collections::HashMap<String, String>>,
+
+    /// Dependency information
+    pub dependencies: Option<String>,
+
+    /// Code structure information
+    pub code_structure: Option<String>,
+
+    /// Maximum number of attempts to try
+    pub max_attempts: Option<u32>,
+
+    /// Current attempt number (1-indexed)
+    pub current_attempt: Option<u32>,
 }
 
 /// A previous code generation attempt
@@ -49,6 +71,24 @@ pub struct PreviousAttempt {
 
     /// The reason it failed or was rejected
     pub failure_reason: String,
+
+    /// The time the attempt was made
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+
+    /// Test results if any
+    pub test_results: Option<String>,
+
+    /// Specific error messages
+    pub error_messages: Option<Vec<String>>,
+
+    /// Whether this attempt was compiled successfully
+    pub compiled: Option<bool>,
+
+    /// Whether this attempt passed tests
+    pub tests_passed: Option<bool>,
+
+    /// Any notes or observations about this attempt
+    pub notes: Option<String>,
 }
 
 /// A code improvement proposal
