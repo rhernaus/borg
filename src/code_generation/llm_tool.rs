@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use log::{info, debug, warn, error};
 use rand;
 use chrono;
+use regex;
 
 use crate::version_control::git::GitManager;
 
@@ -1101,6 +1102,116 @@ impl LlmTool for ModifyFileTool {
     }
 }
 
+/// A tool that executes git commands
+pub struct GitCommandTool {
+    workspace: PathBuf,
+}
+
+impl GitCommandTool {
+    /// Create a new Git command tool
+    pub fn new(workspace: PathBuf) -> Self {
+        Self {
+            workspace,
+        }
+    }
+
+    /// Validate if the Git command is safe to execute
+    fn is_safe_git_command(&self, command: &str) -> bool {
+        // Split the command into parts
+        let parts: Vec<&str> = command.split_whitespace().collect();
+
+        // Check if it's a git command
+        if parts.is_empty() || parts[0] != "git" {
+            return false;
+        }
+
+        // Check for unsafe commands that could potentially harm the system
+        let unsafe_operations = [
+            "clean", "reset --hard", "push --force", "push -f",
+            "filter-branch", "gc", "prune", "reflog",
+            "rm -r", "rm -rf", "rm --cached -r"
+        ];
+
+        for unsafe_op in unsafe_operations {
+            if command.contains(unsafe_op) {
+                return false;
+            }
+        }
+
+        // Disallow arbitrary shell commands through git hooks
+        if command.contains("hook") || command.contains(";") ||
+           command.contains("&&") || command.contains("||") ||
+           command.contains("|") || command.contains(">") ||
+           command.contains("<") {
+            return false;
+        }
+
+        true
+    }
+}
+
+#[async_trait]
+impl LlmTool for GitCommandTool {
+    fn name(&self) -> &str {
+        "git_command"
+    }
+
+    fn description(&self) -> &str {
+        "Execute Git commands directly in the workspace."
+    }
+
+    fn parameters(&self) -> Vec<ToolParameter> {
+        vec![
+            ToolParameter {
+                name: "command".to_string(),
+                description: "The Git command to execute (e.g., 'status', 'log', etc.)".to_string(),
+                required: true,
+                default_value: None,
+                param_type: Some(ToolParameterType::String),
+            },
+        ]
+    }
+
+    async fn execute(&self, args: &[&str]) -> Result<String> {
+        if args.is_empty() {
+            return Err(anyhow::anyhow!("Git command is required"));
+        }
+
+        let command = args[0];
+
+        // Validate that the command is safe
+        if !self.is_safe_git_command(command) {
+            return Err(anyhow::anyhow!(
+                "Unsafe git command rejected. The command must start with 'git' and cannot include potentially destructive operations or shell escape sequences."
+            ));
+        }
+
+        info!("Executing git command: {}", command);
+
+        // Run the command in the workspace directory
+        let output = Command::new("sh")
+            .current_dir(&self.workspace)
+            .arg("-c")
+            .arg(command)
+            .output()
+            .context("Failed to execute git command")?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        let result = if output.status.success() {
+            format!("Command executed successfully:\n{}", stdout)
+        } else {
+            format!("Command failed with exit code {}:\n{}",
+                output.status.code().unwrap_or(-1),
+                if stderr.is_empty() { stdout } else { stderr }
+            )
+        };
+
+        Ok(result)
+    }
+}
+
 /// Tool registry for managing available tools
 pub struct ToolRegistry {
     tools: HashMap<String, Box<dyn LlmTool>>,
@@ -1156,37 +1267,88 @@ impl ToolRegistry {
 
     /// Execute a tool
     pub async fn execute(&self, tool_call: &ToolCall) -> ToolResult {
+        match self.execute_tool(tool_call).await {
+            Ok(result) => result,
+            Err(e) => ToolResult {
+                success: false,
+                result: String::new(),
+                error: Some(format!("Error executing tool: {}", e))
+            }
+        }
+    }
+
+    /// Extract tool calls from a string response
+    pub fn extract_tool_calls(&self, response: &str) -> Vec<ToolCall> {
+        let mut tool_calls = Vec::new();
+
+        // Look for JSON-formatted tool calls
+        let re = regex::Regex::new(r#"\{(?:\s*)"tool"(?:\s*):(?:\s*)"([^"]+)"(?:\s*),(?:\s*)"args"(?:\s*):(?:\s*)\[(.*?)\](?:\s*)\}"#).unwrap();
+
+        for cap in re.captures_iter(response) {
+            let tool_name = cap[1].to_string();
+            let args_json = format!("[{}]", &cap[2]);
+
+            if let Ok(args) = serde_json::from_str::<Vec<String>>(&args_json) {
+                tool_calls.push(ToolCall {
+                    tool: tool_name,
+                    args,
+                });
+            }
+        }
+
+        // Look for more relaxed format (non-JSON)
+        let alt_re = regex::Regex::new(r"(?i)use\s+tool\s+([a-z_]+)(?:\s*):(?:\s*)(.+?)(?:\n|$)").unwrap();
+        for cap in alt_re.captures_iter(response) {
+            let tool_name = cap[1].to_string();
+            let args_text = cap[2].trim();
+
+            // Simple parsing of comma-separated arguments
+            let args = args_text.split(',')
+                .map(|s| s.trim().trim_matches(|c| c == '\'' || c == '"').to_string())
+                .collect();
+
+            tool_calls.push(ToolCall {
+                tool: tool_name,
+                args,
+            });
+        }
+
+        tool_calls
+    }
+
+    /// Execute a specific tool call
+    pub async fn execute_tool(&self, tool_call: &ToolCall) -> Result<ToolResult> {
         if let Some(tool) = self.tools.get(&tool_call.tool) {
             // Convert Vec<String> to Vec<&str> for the tool execute method
             let args: Vec<&str> = tool_call.args.iter().map(|s| s.as_str()).collect();
 
             // Validate the tool call against parameter specifications
             if let Err(e) = self.validate_tool_call(&tool_call.tool, &args) {
-                return ToolResult {
+                return Ok(ToolResult {
                     success: false,
                     result: String::new(),
                     error: Some(e.to_string()),
-                };
+                });
             }
 
             match tool.execute(&args).await {
-                Ok(result) => ToolResult {
+                Ok(result) => Ok(ToolResult {
                     success: true,
                     result,
                     error: None,
-                },
-                Err(e) => ToolResult {
+                }),
+                Err(e) => Ok(ToolResult {
                     success: false,
                     result: String::new(),
                     error: Some(e.to_string()),
-                },
+                }),
             }
         } else {
-            ToolResult {
+            Ok(ToolResult {
                 success: false,
                 result: String::new(),
                 error: Some(format!("Tool not found: {}", tool_call.tool)),
-            }
+            })
         }
     }
 

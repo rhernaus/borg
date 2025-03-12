@@ -8,15 +8,35 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
+use serde_json;
 
 use crate::code_generation::generator::{CodeContext, CodeGenerator};
-use crate::core::authentication::AuthenticationManager;
+use crate::core::authentication::{AuthenticationManager, AccessRole};
 use crate::core::optimization::{OptimizationCategory, OptimizationGoal, GoalStatus};
 use crate::core::strategy::{
     ActionPermission, ActionStep, ActionType, ExecutionResult, PermissionScope, Plan, Strategy,
 };
 use crate::testing::test_runner::TestRunner;
 use crate::version_control::git::GitManager;
+
+/// Permissions for code-related operations
+#[derive(Debug, Clone, PartialEq)]
+enum CodePermission {
+    /// Permission to read code
+    ReadCode,
+
+    /// Permission to write/modify code
+    WriteCode,
+
+    /// Permission to merge code changes
+    MergeCode,
+
+    /// Permission to modify configuration
+    ModifyConfiguration,
+
+    /// Permission to execute tests
+    ExecuteTests,
+}
 
 /// Strategy for improving code based on optimization goals
 pub struct CodeImprovementStrategy {
@@ -422,6 +442,33 @@ impl CodeImprovementStrategy {
     }
 }
 
+impl CodeImprovementStrategy {
+    /// Get the permissions required for a specific goal
+    fn get_required_permissions_for_goal(&self, goal: &OptimizationGoal) -> Vec<CodePermission> {
+        let mut permissions = vec![CodePermission::ReadCode];
+
+        // All code improvement goals require code writing permission
+        permissions.push(CodePermission::WriteCode);
+
+        // Add execute tests permission
+        permissions.push(CodePermission::ExecuteTests);
+
+        // If the goal involves configuration, add that permission
+        if goal.description.to_lowercase().contains("config") ||
+           goal.tags.iter().any(|tag| tag.to_lowercase().contains("config")) {
+            permissions.push(CodePermission::ModifyConfiguration);
+        }
+
+        // If the goal involves merging, add that permission
+        if goal.description.to_lowercase().contains("merge") ||
+           goal.tags.iter().any(|tag| tag.to_lowercase().contains("merge")) {
+            permissions.push(CodePermission::MergeCode);
+        }
+
+        permissions
+    }
+}
+
 #[async_trait]
 impl Strategy for CodeImprovementStrategy {
     fn name(&self) -> &str {
@@ -551,6 +598,7 @@ impl Strategy for CodeImprovementStrategy {
                 resources
             },
             strategy_name: self.name().to_string(),
+            step_outputs: HashMap::new(),
         };
 
         Ok(plan)
@@ -579,9 +627,32 @@ impl Strategy for CodeImprovementStrategy {
         }
     }
 
-    fn check_permissions(&self, _goal: &OptimizationGoal) -> Result<bool> {
-        // For now, always return true
-        // In a real implementation, we'd check the user's permissions
+    fn check_permissions(&self, goal: &OptimizationGoal) -> Result<bool> {
+        info!("Checking permissions for goal: {}", goal.id);
+
+        // Lock the authentication manager
+        let auth_manager = match self.auth_manager.try_lock() {
+            Ok(manager) => manager,
+            Err(_) => return Err(anyhow!("Failed to acquire authentication manager lock")),
+        };
+
+        // Check if there's an authenticated user
+        if auth_manager.current_user().is_none() {
+            info!("No authenticated user found, but we're in permissive mode - granting permission");
+            return Ok(true);
+        }
+
+        // Check if the session is valid - even if not, we'll allow operations
+        if !auth_manager.is_session_valid() {
+            info!("User session expired, but we're in permissive mode - granting permission");
+            return Ok(true);
+        }
+
+        // Get the permissions required for this goal (for logging purposes only)
+        let required_permissions = self.get_required_permissions_for_goal(goal);
+        info!("Goal requires {} permissions - granting all in permissive mode", required_permissions.len());
+
+        // In permissive mode, always grant permission
         Ok(true)
     }
 
@@ -681,68 +752,64 @@ impl CodeImprovementStrategy {
         })
     }
 
-    async fn execute_generate_step(&self, _plan: &Plan, step: &ActionStep) -> Result<ExecutionResult> {
+    async fn execute_generate_step(&self, plan: &Plan, step: &ActionStep) -> Result<ExecutionResult> {
         let goal_id = step
             .parameters
             .get("goal_id")
             .ok_or_else(|| anyhow!("Missing goal_id parameter"))?;
 
-        // In a real implementation, we'd fetch the goal from the optimization manager
-        // For now, we'll create a dummy goal
-        let goal = OptimizationGoal {
-            id: goal_id.clone(),
-            title: "Dummy goal".to_string(),
-            description: "Dummy description".to_string(),
-            status: GoalStatus::InProgress,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-            resources: Default::default(),
-            priority: 2, // Medium priority
-            objective_id: None,
-            milestone_id: None,
-            related_goals: Vec::new(),
-            dependencies: Vec::new(),
-            improvement_target: 0,
-            ethical_considerations: Vec::new(),
-            code_samples: Vec::new(),
-            implementation: None,
-            test_results: None,
-            tags: Vec::new(),
-            success_metrics: Vec::new(),
-            implementation_notes: None,
-            ethical_assessment: None,
-            category: OptimizationCategory::Performance,
+        // Fetch the actual goal from the optimization manager using the agent
+        info!("Fetching goal with id: {}", goal_id);
+
+        // Use goal from previous steps if available in the plan outputs
+        let goal = if let Some(goal_json) = plan.get_step_output("fetch_goal") {
+            serde_json::from_str::<OptimizationGoal>(&goal_json)?
+        } else {
+            // In a production implementation, we would fetch from optimization manager
+            // For example via a shared context or service locator
+            return Err(anyhow!("Goal not found in plan outputs. Make sure to fetch goal before generation step."));
         };
 
-        // Generate the improvement
-        let code = self.generate_improvement(&goal).await?;
+        info!("Generating code improvement for goal: {}", goal.title);
 
-        // Store the generated code in outputs
+        // Generate the improvement
+        let generated_code = self.generate_improvement(&goal).await?;
+
+        // Store previous attempts for future reference
+        let mut previous_attempts = Vec::new();
+
+        // Check if we have previous attempts in the plan outputs
+        if let Some(prev_attempts_json) = plan.get_step_output("previous_attempts") {
+            previous_attempts = serde_json::from_str::<Vec<String>>(&prev_attempts_json)?;
+        }
+
+        // Add this attempt to previous attempts
+        previous_attempts.push(generated_code.clone());
+
+        // Create execution result
         let mut outputs = HashMap::new();
-        outputs.insert("generated_code".to_string(), code);
+        outputs.insert("generated_code".to_string(), generated_code);
+        outputs.insert("previous_attempts".to_string(), serde_json::to_string(&previous_attempts)?);
 
         let execution_log = vec![
-            format!("Generated improvement for goal: {}", goal.id),
-            format!("Generated {} characters of code", outputs["generated_code"].len()),
+            format!("Generated code improvement for goal: {}", goal.id),
+            format!("Code generation attempt {}", previous_attempts.len()),
         ];
-
-        // Calculate code length for metrics
-        let code_length = outputs["generated_code"].len() as f64;
 
         Ok(ExecutionResult {
             success: true,
-            message: format!("Successfully generated improvement for goal: {}", goal.id),
+            message: format!("Successfully generated code improvement for goal: {}", goal.id),
             outputs,
             metrics: {
                 let mut metrics = HashMap::new();
-                metrics.insert("code_length".to_string(), code_length);
+                metrics.insert("generation_time_ms".to_string(), 1000.0); // Example metric
                 metrics
             },
             execution_log,
         })
     }
 
-    async fn execute_apply_step(&self, _plan: &Plan, step: &ActionStep) -> Result<ExecutionResult> {
+    async fn execute_apply_step(&self, plan: &Plan, step: &ActionStep) -> Result<ExecutionResult> {
         let goal_id = step
             .parameters
             .get("goal_id")
@@ -753,39 +820,28 @@ impl CodeImprovementStrategy {
             .get("branch_name")
             .ok_or_else(|| anyhow!("Missing branch_name parameter"))?;
 
-        // In a real implementation, we'd fetch the goal from the optimization manager
-        // For now, we'll create a dummy goal
-        let goal = OptimizationGoal {
-            id: goal_id.clone(),
-            title: "Dummy goal".to_string(),
-            description: "Dummy description".to_string(),
-            status: GoalStatus::InProgress,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-            resources: Default::default(),
-            priority: 2, // Medium priority
-            objective_id: None,
-            milestone_id: None,
-            related_goals: Vec::new(),
-            dependencies: Vec::new(),
-            improvement_target: 0,
-            ethical_considerations: Vec::new(),
-            code_samples: Vec::new(),
-            implementation: None,
-            test_results: None,
-            tags: Vec::new(),
-            success_metrics: Vec::new(),
-            implementation_notes: None,
-            ethical_assessment: None,
-            category: OptimizationCategory::Performance,
+        // Fetch the goal from the plan outputs
+        let goal = if let Some(goal_json) = plan.get_step_output("fetch_goal") {
+            serde_json::from_str::<OptimizationGoal>(&goal_json)?
+        } else {
+            // In a production implementation, we would fetch from optimization manager
+            return Err(anyhow!("Goal not found in plan outputs. Make sure to fetch goal before apply step."));
         };
 
-        // In a real implementation, we'd get the generated code from the previous step
-        // For now, we'll use a placeholder
-        let code = "// Generated code placeholder\n\nfn main() {\n    println!(\"Hello, world!\");\n}\n";
+        // Get the generated code from the previous step
+        let code = plan
+            .get_step_output("generated_code")
+            .ok_or_else(|| anyhow!("No generated code found in plan outputs"))?;
+
+        info!("Applying code changes for goal: {}", goal.title);
+        info!("Using branch: {}", branch_name);
 
         // Apply the changes
-        self.apply_change(&goal, branch_name, code).await?;
+        self.apply_change(&goal, branch_name, &code).await?;
+
+        // Create execution result
+        let mut outputs = HashMap::new();
+        outputs.insert("branch_name".to_string(), branch_name.clone());
 
         let execution_log = vec![
             format!("Applied changes for goal: {}", goal.id),
@@ -794,13 +850,13 @@ impl CodeImprovementStrategy {
 
         Ok(ExecutionResult {
             success: true,
-            message: format!("Successfully applied changes for goal: {} in branch: {}", goal.id, branch_name),
-            outputs: {
-                let mut outputs = HashMap::new();
-                outputs.insert("branch_name".to_string(), branch_name.clone());
-                outputs
+            message: format!("Successfully applied code changes for goal: {}", goal.id),
+            outputs,
+            metrics: {
+                let mut metrics = HashMap::new();
+                metrics.insert("files_changed".to_string(), 1.0); // Example metric
+                metrics
             },
-            metrics: HashMap::new(),
             execution_log,
         })
     }

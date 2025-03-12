@@ -75,6 +75,21 @@ pub struct Plan {
 
     /// Overall strategy used to generate this plan
     pub strategy_name: String,
+
+    /// Outputs from executed steps
+    pub step_outputs: HashMap<String, String>,
+}
+
+impl Plan {
+    /// Get the output of a previous step
+    pub fn get_step_output(&self, key: &str) -> Option<String> {
+        self.step_outputs.get(key).cloned()
+    }
+
+    /// Add output from a step
+    pub fn add_step_output(&mut self, key: &str, value: &str) {
+        self.step_outputs.insert(key.to_string(), value.to_string());
+    }
 }
 
 /// Outcome of executing a plan or step
@@ -271,10 +286,143 @@ impl StrategyManager {
     }
 
     /// Assess whether a plan is ethical
-    async fn assess_plan_ethics(&self, _plan: &Plan) -> Result<bool> {
-        // This would involve more complex logic in a real implementation
-        // For now, we'll just return true
-        Ok(true)
+    async fn assess_plan_ethics(&self, plan: &Plan) -> Result<bool> {
+        info!("Performing ethical assessment of plan: {}", plan.id);
+
+        // Lock the ethics manager
+        let mut ethics_manager = self.ethics_manager.lock().await;
+
+        // Build a description of the plan for ethical assessment
+        let plan_description = self.build_plan_description(plan)?;
+
+        // Build a code representation of the planned changes
+        let code_representation = self.build_plan_code_representation(plan)?;
+
+        // Perform the ethical assessment
+        let assessment = ethics_manager.assess_ethical_impact(
+            &plan_description,
+            &code_representation
+        );
+
+        // Log the assessment results
+        info!("Ethical assessment for plan {} completed with risk level: {:?}",
+            plan.id, assessment.risk_level);
+
+        if !assessment.is_approved {
+            warn!("Ethical assessment rejected plan: {}", plan.id);
+            warn!("Justification: {}", assessment.approval_justification);
+
+            // Log the affected principles
+            for (principle, impact) in &assessment.principle_impacts {
+                warn!("Principle affected: {}: {}", principle, impact);
+            }
+
+            return Ok(false);
+        }
+
+        // If we have high risk but still approved, log warnings
+        use crate::core::ethics::RiskLevel;
+        if matches!(assessment.risk_level, RiskLevel::Medium | RiskLevel::High) {
+            warn!("Plan {} approved despite risk level: {:?}",
+                plan.id, assessment.risk_level);
+            warn!("Justification: {}", assessment.approval_justification);
+
+            // Log the mitigations
+            for mitigation in &assessment.mitigations {
+                info!("Mitigation: {}", mitigation);
+            }
+        }
+
+        Ok(assessment.is_approved)
+    }
+
+    /// Build a description of the plan for ethical assessment
+    fn build_plan_description(&self, plan: &Plan) -> Result<String> {
+        // Get the goal details (in a real system, this would be a lookup)
+        let goal_description = match plan.goal_id.split('-').next() {
+            Some("performance") => "Improve system performance",
+            Some("security") => "Enhance system security",
+            Some("readability") => "Improve code readability",
+            Some("financial") => "Optimize financial operations",
+            Some("complexity") => "Reduce code complexity",
+            Some("test") => "Improve test coverage",
+            _ => "Optimize system behavior",
+        };
+
+        // Describe the strategy
+        let strategy = &plan.strategy_name;
+
+        // Build a complete description
+        let mut description = format!("Plan to {} using {} strategy.\n",
+            goal_description, strategy);
+
+        // Add description of each step
+        description.push_str("Steps:\n");
+        for step in &plan.steps {
+            description.push_str(&format!("- {}\n", step.description));
+        }
+
+        // Add resource estimates
+        description.push_str("Resource estimates:\n");
+        for (resource, value) in &plan.resource_estimate {
+            description.push_str(&format!("- {}: {}\n", resource, value));
+        }
+
+        Ok(description)
+    }
+
+    /// Build a code representation of the planned changes
+    fn build_plan_code_representation(&self, plan: &Plan) -> Result<String> {
+        // In a real system, this might do a pre-analysis of what code would change
+        // For now, we'll create a simplified representation based on the plan steps
+
+        let mut code_representation = String::new();
+
+        // Look at each step's parameters to infer code changes
+        for step in &plan.steps {
+            match step.action_type {
+                ActionType::CodeImprovement => {
+                    // Add basic code representation
+                    code_representation.push_str("// Code improvement\n");
+
+                    // Add any file targets from parameters
+                    if let Some(file) = step.parameters.get("file") {
+                        code_representation.push_str(&format!("// Target file: {}\n", file));
+                    }
+
+                    // Add any code parameter
+                    if let Some(code) = step.parameters.get("code") {
+                        code_representation.push_str(&format!("// Sample: {}\n",
+                            if code.len() > 100 {
+                                &code[0..100]
+                            } else {
+                                code
+                            }
+                        ));
+                    }
+                }
+                ActionType::ApiCall => {
+                    // Add API call representation
+                    code_representation.push_str("// API Call\n");
+                    if let Some(url) = step.parameters.get("url") {
+                        code_representation.push_str(&format!("fetch(\"{}\")\n", url));
+                    }
+                }
+                ActionType::SystemCommand => {
+                    // Add system command representation
+                    code_representation.push_str("// System Command\n");
+                    if let Some(cmd) = step.parameters.get("command") {
+                        code_representation.push_str(&format!("system(\"{}\")\n", cmd));
+                    }
+                }
+                _ => {
+                    // General representation for other action types
+                    code_representation.push_str(&format!("// {}\n", step.description));
+                }
+            }
+        }
+
+        Ok(code_representation)
     }
 
     /// Get all registered strategies

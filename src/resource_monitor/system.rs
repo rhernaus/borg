@@ -2,7 +2,11 @@ use anyhow::Result;
 use async_trait::async_trait;
 use log::{warn, info};
 use std::time::{Duration, Instant};
-use sysinfo::{System, SystemExt, ProcessExt};
+use sysinfo::{System, SystemExt, ProcessExt, CpuExt};
+use tokio;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::atomic::AtomicU64;
+use std::sync::Mutex;
 
 use crate::core::error::BorgError;
 use crate::resource_monitor::monitor::{ResourceMonitor, ResourceUsage, ResourceLimits};
@@ -21,11 +25,17 @@ pub struct SystemMonitor {
     /// Peak memory usage
     peak_memory_mb: f64,
 
+    /// Shared peak memory usage (for thread-safe updates)
+    shared_peak_memory: Option<Arc<Mutex<f64>>>,
+
     /// Whether monitoring is active
     is_monitoring: bool,
 
     /// Monitoring interval
     monitoring_interval: Option<Duration>,
+
+    /// Monitoring flag for background task
+    monitoring_flag: Option<Arc<AtomicBool>>,
 }
 
 impl SystemMonitor {
@@ -40,9 +50,11 @@ impl SystemMonitor {
             system,
             pid: Some(current_pid),
             start_time: Instant::now(),
-            peak_memory_mb: 0.0,
+            peak_memory_mb: 100.0, // Set a reasonable default value (100MB) instead of 0
+            shared_peak_memory: None,
             is_monitoring: false,
             monitoring_interval: None,
+            monitoring_flag: None,
         })
     }
 
@@ -59,6 +71,13 @@ impl SystemMonitor {
             None
         }
     }
+
+    /// Update peak memory if current memory usage is higher
+    fn update_peak_memory(&mut self, memory_mb: f64) {
+        if memory_mb > self.peak_memory_mb {
+            self.peak_memory_mb = memory_mb;
+        }
+    }
 }
 
 #[async_trait]
@@ -71,9 +90,34 @@ impl ResourceMonitor for SystemMonitor {
         let memory_mb = process.memory() as f64 / 1024.0 / 1024.0;
         let cpu_percent = process.cpu_usage() as f64;
 
+        // Update peak memory tracking has been moved to a separate method
+        // We can't call it here since we don't have &mut self
+        // A better approach would be to use interior mutability with Mutex or AtomicF64
+
+        // Check if we have a shared peak memory value to update
+        if let Some(shared_peak) = &self.shared_peak_memory {
+            let mut peak = shared_peak.lock().unwrap();
+            if memory_mb > *peak {
+                *peak = memory_mb;
+                // Also update our local copy
+                let peak_memory_mb = memory_mb;
+
+                // We need a way to update the self.peak_memory_mb field here
+                // For now we'll use the shared value for everything
+            }
+        }
+
         let disk_usage = None; // would be implemented in a real system
 
-        let is_critical = memory_mb > self.peak_memory_mb * 1.5 || cpu_percent > 95.0;
+        // Get the current peak memory - either from our field or the shared atomic
+        let current_peak = if let Some(shared_peak) = &self.shared_peak_memory {
+            *shared_peak.lock().unwrap()
+        } else {
+            self.peak_memory_mb
+        };
+
+        // Only consider memory critical if it's over 500MB or CPU is over 95%
+        let is_critical = (memory_mb > 500.0) || cpu_percent > 95.0;
 
         if is_critical {
             warn!("Critical resource usage detected: memory={:.2}MB, CPU={:.2}%", memory_mb, cpu_percent);
@@ -81,7 +125,7 @@ impl ResourceMonitor for SystemMonitor {
 
         Ok(ResourceUsage {
             memory_usage_mb: memory_mb,
-            peak_memory_usage_mb: self.peak_memory_mb,
+            peak_memory_usage_mb: current_peak,
             cpu_usage_percent: cpu_percent,
             disk_usage_mb: disk_usage,
             uptime_seconds: self.start_time.elapsed().as_secs(),
@@ -121,10 +165,82 @@ impl ResourceMonitor for SystemMonitor {
         self.monitoring_interval = Some(Duration::from_millis(interval_ms));
         self.is_monitoring = true;
 
-        // In a real implementation, this would start a background task to periodically check resources
-        // For simplicity, we'll just log that monitoring has started
-        info!("Resource monitoring started with interval of {}ms", interval_ms);
+        // Create a new system for the background task since System doesn't implement Clone
+        let mut system = System::new_all();
+        system.refresh_all();
 
+        // Create shared peak memory tracker
+        let shared_peak_memory = Arc::new(Mutex::new(self.peak_memory_mb));
+        self.shared_peak_memory = Some(shared_peak_memory.clone());
+
+        // Default to 500MB if peak memory is too low
+        let max_memory_mb = if self.peak_memory_mb < 100.0 { 500.0 } else { self.peak_memory_mb * 1.5 };
+        // Always use 95% as max CPU percent (not tied to memory)
+        let max_cpu_percent = 95.0;
+        let interval = Duration::from_millis(interval_ms);
+        let monitoring_flag = Arc::new(AtomicBool::new(true));
+        let monitoring_flag_clone = monitoring_flag.clone();
+
+        // Store the flag so we can signal the task to stop
+        self.monitoring_flag = Some(monitoring_flag);
+
+        // Launch a background task that periodically checks resource usage
+        tokio::spawn(async move {
+            let mut interval_timer = tokio::time::interval(interval);
+
+            while monitoring_flag_clone.load(Ordering::SeqCst) {
+                interval_timer.tick().await;
+
+                // Refresh system information
+                system.refresh_all();
+
+                // Get current memory usage
+                let used_memory = system.used_memory();
+                let used_memory_mb = used_memory / 1024 / 1024; // Convert to MB
+
+                // Update peak memory if current usage is higher
+                {
+                    let mut peak = shared_peak_memory.lock().unwrap();
+                    if used_memory_mb as f64 > *peak {
+                        *peak = used_memory_mb as f64;
+                    }
+                }
+
+                // Get CPU usage using the global CPU info
+                let cpu_usage = system.global_cpu_info().cpu_usage();
+
+                // Check if we're exceeding limits
+                let memory_exceeded = if max_memory_mb > 0.0 && used_memory_mb > max_memory_mb as u64 {
+                    warn!("Memory usage exceeded: {} MB (limit: {} MB)",
+                        used_memory_mb, max_memory_mb);
+                    true
+                } else {
+                    false
+                };
+
+                let cpu_exceeded = if max_cpu_percent > 0.0 && cpu_usage > max_cpu_percent as f32 {
+                    warn!("CPU usage exceeded: {:.1}% (limit: {}%)",
+                        cpu_usage, max_cpu_percent);
+                    true
+                } else {
+                    false
+                };
+
+                // Log current usage at info level
+                info!("Resource usage - Memory: {} MB, CPU: {:.1}%",
+                    used_memory_mb, cpu_usage);
+
+                // If any resource is exceeded, log at warning level
+                if memory_exceeded || cpu_exceeded {
+                    warn!("Resource limits exceeded");
+                    // In a production system, this could trigger alerts or throttling
+                }
+            }
+
+            info!("Resource monitoring task stopped");
+        });
+
+        info!("Resource monitoring started with interval of {}ms", interval_ms);
         Ok(())
     }
 
@@ -133,7 +249,19 @@ impl ResourceMonitor for SystemMonitor {
             return Ok(());
         }
 
+        // Signal the background task to stop
+        if let Some(flag) = &self.monitoring_flag {
+            flag.store(false, Ordering::SeqCst);
+        }
+
+        // Update our peak memory from the shared source
+        if let Some(shared_peak) = &self.shared_peak_memory {
+            self.peak_memory_mb = *shared_peak.lock().unwrap();
+        }
+
         self.is_monitoring = false;
+        self.monitoring_flag = None;
+        self.shared_peak_memory = None;
         info!("Resource monitoring stopped");
 
         Ok(())

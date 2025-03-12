@@ -309,6 +309,89 @@ After the code blocks, provide a detailed explanation of:
 "#.to_string(),
         );
 
+        // Add template for Git operations
+        templates.insert(
+            "git_operations".to_string(),
+            r#"
+## GIT OPERATIONS GUIDE
+
+You have access to a GitCommandTool that allows you to execute Git commands directly. This tool provides you with flexibility to handle complex Git scenarios that may be difficult to express programmatically.
+
+### AVAILABLE GIT COMMANDS:
+
+You can execute standard Git commands such as:
+- git status
+- git add <files>
+- git commit -m "message"
+- git branch <branch-name>
+- git checkout <branch-name>
+- git merge <branch-name>
+- git log
+- git diff
+- git pull
+- git push (if configured)
+
+### HOW TO CALL THE TOOL:
+
+To execute a Git command, use this exact JSON format:
+```
+{"tool": "git_command", "args": ["your_git_command_here"]}
+```
+
+For example:
+```
+{"tool": "git_command", "args": ["status"]}
+```
+
+Or:
+```
+{"tool": "git_command", "args": ["log", "-n", "5"]}
+```
+
+### SAFETY CONSTRAINTS:
+
+For safety reasons, certain destructive Git commands are restricted:
+- Commands involving `--force` or `-f` flags
+- `git clean` commands
+- Hard resets (`git reset --hard`)
+- Any command with shell escape characters or pipes
+
+### BEST PRACTICES:
+
+1. **Check State First**: Always check the repository state before making changes (use `git status`)
+2. **Handle Errors**: Check command output for errors and handle them appropriately
+3. **Atomic Operations**: Keep Git operations small and focused
+4. **Clear Commit Messages**: Use descriptive commit messages that explain the "why" not just the "what"
+5. **Branch Management**: Create feature branches for new work
+6. **Conflict Resolution**: When conflicts occur, analyze the conflict and resolve appropriately
+
+### EXAMPLE WORKFLOW:
+
+1. Check current status: `{"tool": "git_command", "args": ["status"]}`
+2. Create a new branch: `{"tool": "git_command", "args": ["branch", "feature-x"]}`
+3. Switch to the branch: `{"tool": "git_command", "args": ["checkout", "feature-x"]}`
+4. Make code changes (using other tools)
+5. Check changes: `{"tool": "git_command", "args": ["status"]}`
+6. Stage changes: `{"tool": "git_command", "args": ["add", "src/modified_file.rs"]}`
+7. Commit changes: `{"tool": "git_command", "args": ["commit", "-m", "Implement feature X"]}`
+8. Check log: `{"tool": "git_command", "args": ["log", "-n", "1"]}`
+9. Switch back to main: `{"tool": "git_command", "args": ["checkout", "main"]}`
+10. Merge changes: `{"tool": "git_command", "args": ["merge", "feature-x"]}`
+
+### HANDLING MERGE CONFLICTS:
+
+If a merge conflict occurs:
+1. Identify conflicted files from command output
+2. Use FileContentsTool to read the conflicted files
+3. Analyze the conflicts (marked with <<<<<<< HEAD, =======, and >>>>>>> branch)
+4. Use ModifyFileTool to resolve conflicts
+5. Stage resolved files: `{"tool": "git_command", "args": ["add", "<resolved-files>"]}`
+6. Complete the merge: `{"tool": "git_command", "args": ["commit", "-m", "Resolve merge conflicts"]}`
+
+Remember to approach Git operations with care and maintain the integrity of the repository.
+"#.to_string(),
+        );
+
         Self { templates }
     }
 
@@ -503,6 +586,15 @@ After the code blocks, provide a detailed explanation of:
         }
 
         prompt
+    }
+
+    /// Create a prompt for Git operations
+    pub fn create_git_operations_prompt(&self) -> String {
+        let git_template = self.templates.get("git_operations").unwrap();
+        let system_message = self.templates.get("system_message").unwrap();
+
+        // Combine system message and git operations template
+        format!("{}\n\n{}", system_message, git_template)
     }
 
     /// Add a custom template

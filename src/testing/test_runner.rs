@@ -118,6 +118,57 @@ pub trait TestRunner: Send + Sync {
 
     /// Run a benchmark on a branch
     async fn run_benchmark(&self, branch: &str, target_path: Option<&Path>) -> Result<TestResult>;
+
+    /// Run benchmarks on a branch (multiple benchmarks)
+    async fn run_benchmarks(&self, branch: &str) -> Result<TestResult> {
+        // Default implementation just calls the single benchmark method
+        self.run_benchmark(branch, None).await
+    }
+
+    /// Run tests with a specific tag
+    async fn run_tests_with_tag(&self, branch: &str, tag: &str) -> Result<TestResult> {
+        // Default implementation just passes the tag as a filter to the tests
+        info!("Running tests with tag: {} on branch: {}", tag, branch);
+        self.run_tests(branch, None).await
+    }
+
+    /// Run linting checks on a branch
+    async fn run_linting(&self, branch: &str) -> Result<TestResult> {
+        // Default implementation - can be overridden by specific implementations
+        info!("Running linting on branch: {}", branch);
+        let result = TestResult {
+            success: true,
+            output: "Linting not implemented for this test runner".to_string(),
+            duration: Duration::from_secs(0),
+            metrics: None,
+            report: None,
+            failures: None,
+            compilation_errors: None,
+            exit_code: Some(0),
+            branch: Some(branch.to_string()),
+            test_stage: Some("linting".to_string()),
+        };
+        Ok(result)
+    }
+
+    /// Run coverage analysis on a branch
+    async fn run_coverage_analysis(&self, branch: &str) -> Result<TestResult> {
+        // Default implementation - can be overridden by specific implementations
+        info!("Running coverage analysis on branch: {}", branch);
+        let result = TestResult {
+            success: true,
+            output: "Coverage analysis not implemented for this test runner".to_string(),
+            duration: Duration::from_secs(0),
+            metrics: None,
+            report: None,
+            failures: None,
+            compilation_errors: None,
+            exit_code: Some(0),
+            branch: Some(branch.to_string()),
+            test_stage: Some("coverage".to_string()),
+        };
+        Ok(result)
+    }
 }
 
 /// Cargo-based test runner

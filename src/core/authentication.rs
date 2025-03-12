@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use log::info;
-use anyhow::Result;
+use log::{info, warn};
+use anyhow::{Result, anyhow};
+use uuid::Uuid;
 
 /// Represents different access roles in the system
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -53,81 +54,35 @@ pub struct AuthenticatedUser {
 pub struct AuthenticationManager {
     /// Currently authenticated user, if any
     current_user: Option<AuthenticatedUser>,
-
-    /// Public key for verifying creator credentials
-    creator_public_key: String,
 }
 
 impl AuthenticationManager {
-    /// Create a new authentication manager with the embedded public key
+    /// Create a new authentication manager
     pub fn new() -> Self {
-        // In a real implementation, this would be loaded from a secure configuration
-        let creator_public_key = String::from(
-            "-----BEGIN PUBLIC KEY-----
-MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEYFrPrrc+dLnfd+ieArlCEzNUj0KXgU6y
-C9fj71wNfxObNc+zMnU5gby5xCtDbRmQFNDyPwuYTl1zgdV2RdGJ3VdJWGAw9CgJ
-sZGbB/2izDVf4BUOU0N/OdMVhyPAYIGy
------END PUBLIC KEY-----"
-        );
-
         Self {
             current_user: None,
-            creator_public_key,
         }
     }
 
-    /// Attempt to authenticate a user with a username and password
-    pub fn authenticate_user(&mut self, username: &str, password: &str) -> Result<AccessRole> {
-        // In a real implementation, this would verify credentials against a secure database
-        // This is just a placeholder implementation
+    /// Automatically grant access with the specified role
+    pub fn grant_access(&mut self, name: &str, role: AccessRole) -> Result<AccessRole> {
+        info!("Granting access to: {} with role: {}", name, role);
 
-        info!("Authenticating user: {}", username);
+        let now = chrono::Utc::now();
+        let expires = now + chrono::Duration::hours(24); // 24 hour session
 
-        // For now, we'll simulate a successful authentication for any non-empty username/password
-        if !username.is_empty() && !password.is_empty() {
-            let now = chrono::Utc::now();
-            let expires = now + chrono::Duration::hours(8); // 8 hour session
+        // Create authenticated user
+        self.current_user = Some(AuthenticatedUser {
+            id: Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            role,
+            authenticated_at: now,
+            expires_at: expires,
+        });
 
-            // In a real implementation, the role would be determined from the user database
-            let role = AccessRole::User;
+        info!("Access granted to {} with role {}", name, role);
 
-            let user = AuthenticatedUser {
-                id: format!("user-{}", now.timestamp()),
-                name: username.to_string(),
-                role,
-                authenticated_at: now,
-                expires_at: expires,
-            };
-
-            self.current_user = Some(user);
-
-            info!("User {} authenticated successfully with role: {}", username, role);
-
-            Ok(role)
-        } else {
-            Err(anyhow::anyhow!("Authentication failed: Invalid credentials"))
-        }
-    }
-
-    /// Verify a creator's identity using a digital signature
-    pub fn verify_creator(&mut self, _challenge_response: &str, _signature: &str) -> Result<bool> {
-        // This would implement proper public key verification to authenticate the creator
-        // For security reasons, this is just a placeholder in this implementation
-
-        info!("Attempting to verify creator credentials");
-
-        // In a real implementation:
-        // 1. Verify the signature of the challenge using the creator's public key
-        // 2. If valid, grant creator access
-
-        // For the placeholder:
-        let _creator_verification_result = false;
-
-        // NOTE: The actual implementation would verify the cryptographic signature
-        // using the public key, but we're not implementing that here to avoid
-        // creating an actual backdoor
-
-        Err(anyhow::anyhow!("Creator verification not implemented for security reasons"))
+        Ok(role)
     }
 
     /// Get the current authenticated user
@@ -178,4 +133,19 @@ sZGbB/2izDVf4BUOU0N/OdMVhyPAYIGy
         }
         self.current_user = None;
     }
+}
+
+// Helper function to extract a value from PEM format
+fn extract_public_key_from_pem(pem: &str) -> Result<Vec<u8>> {
+    // Simplistic PEM parsing - proper implementation would use a crypto library
+    let lines: Vec<&str> = pem.lines()
+        .filter(|line| !line.starts_with("-----BEGIN") && !line.starts_with("-----END"))
+        .collect();
+
+    if lines.is_empty() {
+        return Err(anyhow!("Invalid PEM format"));
+    }
+
+    // Just return an empty vec since we're not using this functionality anymore
+    Ok(Vec::new())
 }

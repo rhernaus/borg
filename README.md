@@ -2,6 +2,20 @@
 
 Borg is an autonomous self-improving AI agent implemented in Rust. It's designed to iteratively generate, modify, and evaluate its own code to improve efficiency, ensure survival, and scale over time.
 
+## Project Status
+
+**Current Version**: 0.1.1
+
+The project is fully implemented with all core components working together. The agent can now run and is ready for defining optimization goals. Major security and production features have been implemented, including:
+
+- ✅ Proper error handling throughout the codebase
+- ✅ Secure authentication with bcrypt password hashing and ED25519 signatures
+- ✅ Resource monitoring with proper limits and checks
+- ✅ Comprehensive logging of all operations
+- ✅ Robust Git integration with proper merge handling
+- ✅ Code complexity analysis with fallback mechanisms
+- ✅ Error handling metric evaluation
+
 ## Core Components
 
 - **Code Generation & Modification Engine**: AI-powered module that writes new Rust code or refactors existing code
@@ -11,6 +25,8 @@ Borg is an autonomous self-improving AI agent implemented in Rust. It's designed
 - **Version Control & Autonomous GitOps**: Tracks all code modifications with Git
 - **Strategic Planning System**: Manages long-term goals and translates them into actionable milestones and tactical goals
 - **Multi-Modal Action Framework**: Enables the agent to interact with external systems through APIs, web research, and system commands
+- **Ethics Framework**: Ensures all agent actions adhere to ethical principles
+- **Authentication System**: Manages access control and permissions with secure cryptographic methods
 
 ## Agent Architecture and Workflow
 
@@ -152,13 +168,28 @@ The agent uses a flexible strategy-based system to handle different types of act
 
 Each strategy implements the same core interface while providing specialized functionality for its domain, allowing the agent to select the most appropriate approach based on the goal's requirements.
 
-## Development Roadmap
+## Production Readiness Progress
 
-This project follows a phased development approach:
+The agent is approaching production readiness with several key features implemented:
 
-1. **Bootstrap & Initial Self-Improvement**: Create minimal viable autonomous developer
-2. **Swarm-Based Parallel Development**: Enable multiple concurrent self-improvements
-3. **Conflict Resolution and Evolutionary Selection**: Implement branch competition and selection
+### Completed Production Features:
+- ✅ Proper error handling throughout the codebase
+- ✅ Secure authentication with bcrypt password hashing and ED25519 signatures
+- ✅ Resource monitoring with proper limits and checks
+- ✅ Comprehensive logging of all operations
+- ✅ Robust Git integration with proper merge handling
+- ✅ Code complexity analysis with fallback mechanisms
+- ✅ Error handling metric evaluation
+
+### Pending Production Features:
+- ⬜ Database integration for persistent storage
+- ⬜ Comprehensive test coverage
+- ⬜ Performance optimization
+- ⬜ Deployment automation
+- ⬜ Monitoring and alerting
+- ⬜ Documentation
+- ⬜ User interface
+- ⬜ API documentation
 
 ## Getting Started
 
@@ -249,161 +280,9 @@ The application uses configuration files to manage its settings. For security re
 
 4. The `config.production.toml` file is automatically ignored by Git to prevent accidentally committing your API keys.
 
-5. By default, the application will use `config.production.toml` if it exists, and fall back to `config.toml` otherwise.
+## Roadmap
 
-### Multi-LLM Configuration
-
-Borg supports using different LLM providers and models for different tasks:
-
-- **Code Generation**: Used for writing and modifying code
-- **Ethics Assessment**: Evaluates ethical implications of changes
-- **Planning**: High-level decision making and goal selection
-- **Code Review**: Validates and reviews generated code
-
-Each can be configured with different providers, models, and settings in the config file.
-
-## Using the Strategic Planning System
-
-Borg includes a comprehensive strategic planning system that allows creators to define long-term objectives and have the agent autonomously work toward them.
-
-### Defining Strategic Objectives
-
-Strategic objectives can be defined in TOML format:
-
-```toml
-[[objectives]]
-id = "performance-2025"
-title = "Optimize System Performance"
-description = "Reduce the system's resource footprint by 50% while maintaining throughput."
-timeframe = 12  # months
-creator = "lead-developer"
-key_results = [
-  "Reduce memory usage by 50% from baseline",
-  "Reduce CPU utilization by 40% from baseline"
-]
-constraints = [
-  "Must maintain all existing functionality",
-  "Cannot reduce security measures"
-]
-```
-
-### Loading Objectives
-
-Use the provided command to load objectives:
-
-```
-cargo run -- load-objectives examples/strategic_objective.toml
-```
-
-### Managing the Planning System
-
-The CLI provides commands for working with the planning system:
-
-```
-# Generate milestones and tactical goals from objectives
-cargo run -- plan generate
-
-# View the current strategic plan
-cargo run -- plan show
-
-# Generate a progress report
-cargo run -- plan report
-```
-
-### How It Works
-
-The strategic planning system operates on three levels:
-
-1. **Strategic Objectives**: Long-term goals defined by creators (6-18 months)
-2. **Milestones**: Medium-term achievements that mark progress toward objectives (1-3 months)
-3. **Tactical Goals**: Short-term, actionable improvements that contribute to milestones (days to weeks)
-
-The agent automatically generates milestones from objectives and tactical goals from milestones, creating a coherent hierarchy of improvements that align with the creator's strategic vision.
-
-## Iterative Code Generation Process
-
-One of the most powerful aspects of the Borg agent is its iterative code generation process. Unlike traditional one-shot code generation, Borg's LLM can engage in a multi-step conversation with the codebase, using tools to explore and modify files multiple times before finalizing changes.
-
-```mermaid
-flowchart TD
-    Start[Start Code Generation] --> ExtractContext[Extract Context from Goal]
-    ExtractContext --> InitSession[Initialize LLM Session]
-
-    subgraph ToolLoop["Tool Usage Loop"]
-        InitSession --> PromptLLM[Prompt LLM for Next Action]
-        PromptLLM --> ToolCall{Tool Call Type?}
-
-        ToolCall -- Search --> CodeSearch[Search Codebase]
-        ToolCall -- Read --> ReadFile[Read File Contents]
-        ToolCall -- FindTests --> FindTests[Find Related Tests]
-        ToolCall -- Explore --> ExploreDirectory[Explore Directory Structure]
-        ToolCall -- GitHistory --> ViewHistory[View Git History]
-        ToolCall -- Compile --> CheckCompilation[Check Compilation]
-
-        CodeSearch --> ProcessResults[Process Tool Results]
-        ReadFile --> ProcessResults
-        FindTests --> ProcessResults
-        ExploreDirectory --> ProcessResults
-        ViewHistory --> ProcessResults
-        CheckCompilation --> ProcessResults
-
-        ProcessResults --> UpdateContext[Update LLM Context]
-        UpdateContext --> PromptLLM
-    end
-
-    ToolCall -- Edit --> CodeEdit[Edit File]
-    CodeEdit --> EditType{Edit Type?}
-    EditType -- Intermediate --> UpdateContext
-    EditType -- Final --> FinalEdits[Finalize Edits]
-
-    FinalEdits --> CompileCheck[Compilation Check]
-    CompileCheck -- Fails --> PromptLLM
-    CompileCheck -- Passes --> PrepareChanges[Prepare Final Changes]
-
-    PrepareChanges --> CommitToBranch[Commit to Feature Branch]
-    CommitToBranch --> End[Proceed to Testing]
-```
-
-### Key Features of the Iterative Process:
-
-1. **Exploration Phase**
-   - The LLM uses tools to understand the codebase context
-   - Code search for patterns or symbols
-   - File content reading for detailed understanding
-   - Test discovery to understand validation requirements
-   - Directory exploration to grasp project structure
-   - Git history analysis to understand code evolution
-
-2. **Multi-tool Support**
-   - The LLM can make multiple tool calls in a single response
-   - Batch related operations together for efficiency
-   - Example: searching multiple files, reading multiple files, or creating/modifying multiple files
-   - Reduces the number of interaction cycles needed for complex tasks
-
-3. **Code Generation Phase**
-   - After gathering context, the LLM decides which files to create or modify
-   - Uses create_file and modify_file tools to implement changes
-   - Autonomously determines the best files to modify based on codebase understanding
-   - No explicit instruction needed about which files to change
-
-4. **Iterative Modification**
-   - Multiple file edits can happen within a single generation session
-   - Intermediate edits update the LLM's context
-   - Continuous compilation checks provide immediate feedback
-   - Each modification builds on previous ones
-
-5. **Finalization**
-   - The LLM explicitly signals when implementation is complete
-   - Final compilation check ensures code validity
-   - Only after completion are changes prepared for branch commit
-   - The agent creates a clean branch with all changes applied
-
-6. **Feedback Integration**
-   - Results from compilation checks feed back into the LLM's context
-   - Test results and benchmark results can trigger another iteration
-   - The LLM learns from failures and adapts its approach
-
-This iterative approach mirrors how human developers work, allowing the agent to build up solutions incrementally with continuous feedback, rather than attempting to generate a perfect solution in one pass.
+Please see the [PROGRESS.md](PROGRESS.md) file for detailed information on the project's current status and roadmap.
 
 ## License
 

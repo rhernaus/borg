@@ -15,7 +15,7 @@ use crate::code_generation::llm_tool::{
     LlmTool, ToolCall, ToolResult, ToolRegistry,
     CodeSearchTool, FileContentsTool, FindTestsTool,
     DirectoryExplorationTool, GitHistoryTool, CompilationFeedbackTool,
-    CreateFileTool, ModifyFileTool
+    CreateFileTool, ModifyFileTool, GitCommandTool
 };
 use crate::core::config::{LlmConfig, CodeGenerationConfig, LlmLoggingConfig};
 use crate::version_control::git::GitManager;
@@ -68,6 +68,7 @@ impl LlmCodeGenerator {
         tool_registry.register(CompilationFeedbackTool::new(workspace.clone()));
         tool_registry.register(CreateFileTool::new(workspace.clone()));
         tool_registry.register(ModifyFileTool::new(workspace.clone()));
+        tool_registry.register(GitCommandTool::new(workspace.clone()));
 
         Ok(Self {
             llm,
@@ -389,6 +390,108 @@ impl LlmCodeGenerator {
 
         Ok(())
     }
+
+    /// Process a prompt with tools
+    async fn process_with_tools(&self, prompt: &str) -> Result<String> {
+        info!("Processing prompt with tools, prompt length: {}", prompt.len());
+
+        let mut conversation = vec![
+            ("system", prompt.to_string()),
+        ];
+
+        let mut iterations = 0;
+
+        while iterations < self.max_tool_iterations {
+            iterations += 1;
+
+            info!("Tool iteration {}/{}", iterations, self.max_tool_iterations);
+
+            // Generate the next message from the LLM
+            let llm_response = self.llm.generate(&conversation[0].1, Some(4096), Some(0.5)).await?;
+
+            // Look for tool calls in the response
+            let tool_calls = self.tool_registry.extract_tool_calls(&llm_response);
+
+            if tool_calls.is_empty() {
+                info!("No tool calls found, returning response");
+                return Ok(llm_response);
+            }
+
+            info!("Found {} tool calls", tool_calls.len());
+
+            // Add the LLM response to the conversation
+            conversation.push(("assistant", llm_response));
+
+            // Execute each tool call
+            let mut all_results = String::new();
+
+            for tool_call in tool_calls {
+                info!("Executing tool: {}", tool_call.tool);
+
+                // Execute the tool
+                let result = match self.tool_registry.execute_tool(&tool_call).await {
+                    Ok(result) => result,
+                    Err(e) => {
+                        let error_message = format!("Error executing tool {}: {}", tool_call.tool, e);
+                        info!("{}", error_message);
+                        ToolResult {
+                            success: false,
+                            result: String::new(),
+                            error: Some(error_message),
+                        }
+                    }
+                };
+
+                let result_message = if result.success {
+                    format!("Tool '{}' execution succeeded:\n{}", tool_call.tool, result.result)
+                } else {
+                    format!("Tool '{}' execution failed:\n{}", tool_call.tool,
+                            result.error.unwrap_or_else(|| "Unknown error".to_string()))
+                };
+
+                all_results.push_str(&result_message);
+                all_results.push_str("\n\n");
+            }
+
+            // Add the tool results to the conversation
+            conversation.push(("user", all_results));
+        }
+
+        info!("Reached maximum tool iterations ({}), returning final response", self.max_tool_iterations);
+
+        // Get the last assistant message as the final response
+        for (role, message) in conversation.iter().rev() {
+            if *role == "assistant" {
+                return Ok(message.clone());
+            }
+        }
+
+        // If no assistant message found, generate a final response
+        let final_prompt = format!("{}\n\nPlease provide your final response based on the conversation above.", prompt);
+        let final_response = self.llm.generate(&final_prompt, Some(4096), Some(0.5)).await?;
+
+        Ok(final_response)
+    }
+
+    /// Generate a response using the git operations prompt
+    pub async fn generate_git_operations_response(&self, query: &str) -> Result<String> {
+        let prompt = self.prompt_manager.create_git_operations_prompt();
+
+        info!("Generating git operations response for query: {}", query);
+
+        // Combine the prompt with the user's query
+        let full_prompt = format!("{}\n\n## QUERY:\n{}", prompt, query);
+
+        if self.use_tools {
+            // Process with tools
+            let response = self.process_with_tools(&full_prompt).await?;
+            Ok(response)
+        } else {
+            // Direct LLM call without tools
+            let response = self.llm.generate(&full_prompt, Some(4096), Some(0.5)).await?;
+            Ok(response)
+        }
+    }
 }
 
 #[async_trait]
@@ -486,5 +589,10 @@ impl CodeGenerator for LlmCodeGenerator {
         // We could also log this to a database or send it to a feedback API
 
         Ok(())
+    }
+
+    /// Generate a response for git operations
+    async fn generate_git_response(&self, query: &str) -> Result<String> {
+        self.generate_git_operations_response(query).await
     }
 }

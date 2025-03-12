@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use log::{info, warn, error};
+use std::collections::HashMap;
+use chrono::{DateTime, Utc};
 
 /// Fundamental principles that guide the AI's behavior and decision-making
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -292,34 +295,115 @@ impl EthicsManager {
 
     /// Assess the ethical impact of a proposed change
     pub fn assess_ethical_impact(&mut self,
-                                _description: &str,
-                                _code_change: &str) -> EthicalImpactAssessment {
-        // This is a placeholder implementation - in a real system, this would contain
-        // sophisticated analysis of the proposed change against ethical principles
+                                description: &str,
+                                code_change: &str) -> EthicalImpactAssessment {
+        // Implement a more sophisticated analysis of the proposed change against ethical principles
+        info!("Performing ethical impact assessment");
 
-        // For now, we'll just create a default low-risk assessment
-        let assessment = EthicalImpactAssessment {
-            affected_principles: vec![
+        // Initialize empty collections to store results
+        let mut affected_principles = Vec::new();
+        let mut principle_impacts = Vec::new();
+        let mut affected_obligations = Vec::new();
+        let mut obligation_impacts = Vec::new();
+        let mut mitigations = Vec::new();
+        let mut risk_level = RiskLevel::Low;
+
+        // Check for potential impacts on each fundamental principle
+        // 1. Check for human dignity and autonomy concerns
+        if contains_autonomy_risks(description, code_change) {
+            affected_principles.push(FundamentalPrinciple::HumanDignityAndAutonomy);
+            principle_impacts.push((
+                FundamentalPrinciple::HumanDignityAndAutonomy,
+                "May affect user autonomy by automating decisions".to_string()
+            ));
+            mitigations.push("Ensure user confirmation for any automated decisions".to_string());
+        }
+
+        // 2. Check for privacy concerns
+        if contains_privacy_risks(description, code_change) {
+            affected_principles.push(FundamentalPrinciple::PrivacyAndDataProtection);
+            principle_impacts.push((
+                FundamentalPrinciple::PrivacyAndDataProtection,
+                "Handles personal data that requires protection".to_string()
+            ));
+            mitigations.push("Implement data minimization and encryption".to_string());
+
+            // Escalate risk level for privacy concerns
+            if risk_level < RiskLevel::Medium {
+                risk_level = RiskLevel::Medium;
+            }
+        }
+
+        // 3. Check for reliability impacts
+        if contains_reliability_impacts(description, code_change) {
+            affected_principles.push(FundamentalPrinciple::Reliability);
+            principle_impacts.push((
                 FundamentalPrinciple::Reliability,
-                FundamentalPrinciple::SafeInnovation
-            ],
-            principle_impacts: vec![
-                (FundamentalPrinciple::Reliability, "May improve system reliability".to_string()),
-                (FundamentalPrinciple::SafeInnovation, "Implements improvements safely".to_string())
-            ],
-            affected_obligations: vec![
-                AIObligationKind::DocumentationAndInformation
-            ],
-            obligation_impacts: vec![
-                (AIObligationKind::DocumentationAndInformation, "Change is well-documented".to_string())
-            ],
-            risk_level: RiskLevel::Low,
-            mitigations: vec!["Changes are tested before merging".to_string()],
-            is_approved: true,
-            approval_justification: "Low-risk change with proper testing and documentation".to_string(),
+                "Modifies critical system components".to_string()
+            ));
+            mitigations.push("Implement comprehensive testing for reliability".to_string());
+        }
+
+        // 4. Check for transparency concerns
+        if contains_transparency_risks(description, code_change) {
+            affected_principles.push(FundamentalPrinciple::TransparencyAndOversight);
+            principle_impacts.push((
+                FundamentalPrinciple::TransparencyAndOversight,
+                "Changes may reduce system transparency".to_string()
+            ));
+            mitigations.push("Add enhanced logging for change transparency".to_string());
+        }
+
+        // 5. Check for safe innovation
+        affected_principles.push(FundamentalPrinciple::SafeInnovation);
+        principle_impacts.push((
+            FundamentalPrinciple::SafeInnovation,
+            "Implements improvements with safety controls".to_string()
+        ));
+
+        // Check for impacts on obligations
+        if contains_documentation_impacts(description, code_change) {
+            affected_obligations.push(AIObligationKind::DocumentationAndInformation);
+            obligation_impacts.push((
+                AIObligationKind::DocumentationAndInformation,
+                "May require documentation updates".to_string()
+            ));
+        }
+
+        // Check if users should be notified of changes
+        if contains_user_facing_changes(description, code_change) {
+            affected_obligations.push(AIObligationKind::NotificationOfAIInteraction);
+            obligation_impacts.push((
+                AIObligationKind::NotificationOfAIInteraction,
+                "User-facing changes require notification".to_string()
+            ));
+        }
+
+        // Perform risk level assessment based on the detected impacts
+        risk_level = assess_overall_risk_level(
+            &affected_principles,
+            &principle_impacts,
+            description,
+            code_change
+        );
+
+        // Record this assessment in history
+        let assessment = EthicalImpactAssessment {
+            affected_principles,
+            principle_impacts,
+            affected_obligations,
+            obligation_impacts,
+            risk_level,
+            mitigations,
+            is_approved: risk_level < RiskLevel::High,
+            approval_justification: if risk_level < RiskLevel::High {
+                "Changes pose acceptable ethical risk with mitigations".to_string()
+            } else {
+                "Changes pose high ethical risk, mitigations required".to_string()
+            },
         };
 
-        // Add to history
+        // Store in history
         self.impact_assessment_history.push(assessment.clone());
 
         assessment
@@ -380,4 +464,117 @@ impl EthicsManager {
     pub fn get_impact_assessment_history(&self) -> &[EthicalImpactAssessment] {
         &self.impact_assessment_history
     }
+}
+
+// Helper functions for ethical assessment
+
+/// Check if the change could impact human autonomy
+fn contains_autonomy_risks(description: &str, code_change: &str) -> bool {
+    let autonomy_keywords = [
+        "automat", "decision", "choice", "override", "force", "mandatory",
+        "required", "no option", "no choice", "auto-"
+    ];
+
+    contains_keywords(description, &autonomy_keywords) ||
+        contains_keywords(code_change, &autonomy_keywords)
+}
+
+/// Check if the change could impact privacy
+fn contains_privacy_risks(description: &str, code_change: &str) -> bool {
+    let privacy_keywords = [
+        "personal", "data", "user info", "tracking", "monitor", "store",
+        "collect", "privacy", "PII", "information", "profile", "email",
+        "phone", "address", "location", "sensitive"
+    ];
+
+    contains_keywords(description, &privacy_keywords) ||
+        contains_keywords(code_change, &privacy_keywords)
+}
+
+/// Check if the change affects system reliability
+fn contains_reliability_impacts(description: &str, code_change: &str) -> bool {
+    let reliability_keywords = [
+        "critical", "essential", "core", "stability", "reliable", "uptime",
+        "availability", "performance", "error handling", "failsafe", "recovery",
+        "exception", "crash", "hang", "freeze", "deadlock"
+    ];
+
+    contains_keywords(description, &reliability_keywords) ||
+        contains_keywords(code_change, &reliability_keywords)
+}
+
+/// Check if the change reduces system transparency
+fn contains_transparency_risks(description: &str, code_change: &str) -> bool {
+    let transparency_keywords = [
+        "hidden", "obscure", "mask", "conceal", "opaque", "unclear",
+        "implicit", "black box", "undocumented", "internal"
+    ];
+
+    contains_keywords(description, &transparency_keywords) ||
+        contains_keywords(code_change, &transparency_keywords)
+}
+
+/// Check if the change impacts documentation requirements
+fn contains_documentation_impacts(description: &str, code_change: &str) -> bool {
+    let documentation_keywords = [
+        "api", "interface", "public", "export", "doc", "comment",
+        "README", "tutorial", "guide", "manual", "help"
+    ];
+
+    contains_keywords(description, &documentation_keywords) ||
+        contains_keywords(code_change, &documentation_keywords)
+}
+
+/// Check if the change impacts user-facing components
+fn contains_user_facing_changes(description: &str, code_change: &str) -> bool {
+    let ui_keywords = [
+        "ui", "user interface", "frontend", "display", "view", "screen",
+        "page", "button", "input", "form", "notification", "alert", "message"
+    ];
+
+    contains_keywords(description, &ui_keywords) ||
+        contains_keywords(code_change, &ui_keywords)
+}
+
+/// Helper to check if text contains any of the given keywords
+fn contains_keywords(text: &str, keywords: &[&str]) -> bool {
+    let lower_text = text.to_lowercase();
+    keywords.iter().any(|&keyword| lower_text.contains(&keyword.to_lowercase()))
+}
+
+/// Assess the overall risk level based on all impacts
+fn assess_overall_risk_level(
+    affected_principles: &[FundamentalPrinciple],
+    principle_impacts: &[(FundamentalPrinciple, String)],
+    description: &str,
+    code_change: &str
+) -> RiskLevel {
+    // Count the number of affected principles as a simple heuristic
+    if affected_principles.len() >= 3 {
+        return RiskLevel::Medium;
+    }
+
+    // Check for specific high-risk combinations
+    let has_privacy_impact = affected_principles.iter()
+        .any(|p| matches!(p, FundamentalPrinciple::PrivacyAndDataProtection));
+
+    let has_autonomy_impact = affected_principles.iter()
+        .any(|p| matches!(p, FundamentalPrinciple::HumanDignityAndAutonomy));
+
+    if has_privacy_impact && has_autonomy_impact {
+        return RiskLevel::High;
+    }
+
+    // Check for specific high-risk code patterns
+    let high_risk_patterns = [
+        "sudo", "exec(", "eval(", "system(", "rm -rf", "DROP TABLE",
+        "DELETE FROM", "password", "token", "key", "credential"
+    ];
+
+    if high_risk_patterns.iter().any(|&pattern| code_change.contains(pattern)) {
+        return RiskLevel::High;
+    }
+
+    // Default to low risk if no specific concerns detected
+    RiskLevel::Low
 }

@@ -1,13 +1,21 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand};
-use log::{info, LevelFilter, debug};
-use borg::core::agent::Agent;
-use borg::core::config::Config;
+use log::{info, error, warn, LevelFilter, debug};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::sync::Mutex as TokioMutex;
 use std::fs;
-use serde::Deserialize;
 use std::env;
 use std::collections::HashMap;
+
+use borg::core::agent::Agent;
+use borg::core::config::Config;
+use borg::core::optimization::{OptimizationGoal, GoalStatus, OptimizationCategory, PriorityLevel};
+use borg::version_control::git::GitManager;
+use borg::version_control::git_implementation::GitImplementation;
+use borg::code_generation::generator::CodeGenerator;
+use borg::code_generation::llm_generator::LlmCodeGenerator;
+use serde::Deserialize;
 
 #[derive(Parser)]
 #[clap(author, version, about = "Borg - Autonomous Self-Improving AI Agent")]
@@ -45,6 +53,14 @@ enum Commands {
         /// Path to the strategic objectives TOML file
         #[arg(value_name = "OBJECTIVES_FILE")]
         objectives_file: PathBuf,
+    },
+
+    /// Execute Git operations with LLM assistance
+    #[command(name = "git")]
+    GitOperation {
+        /// The Git operation query
+        #[arg(name = "query")]
+        query: String,
     },
 }
 
@@ -108,8 +124,7 @@ struct ObjectivesConfig {
     objectives: Vec<TomlObjective>,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     // Parse command line arguments
     let cli = Cli::parse();
 
@@ -152,12 +167,117 @@ async fn main() -> Result<()> {
         ]);
     }
 
-    // Initialize agent
-    let agent = Agent::new(config).await?;
-    agent.initialize().await?;
+    // For the git operation command, we don't fully initialize the agent
+    // We just need the config to create a code generator
+    // For all other commands, we initialize the agent normally
+    match &cli.command {
+        Some(Commands::GitOperation { .. }) => {
+            // Handle git operation separately without moving config
+        },
+        _ => {
+            // Initialize the agent for other commands
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?
+                .block_on(async {
+                    let agent = Agent::new(config).await?;
+                    handle_commands(cli.command, agent).await
+                })?;
+            return Ok(());
+        }
+    }
 
+    // Handle the git operation command
+    if let Some(Commands::GitOperation { query }) = cli.command {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?
+            .block_on(async {
+                info!("Executing Git operation with query: {}", query);
+
+                // Get the LLM config
+                let llm_config = config.llm.get("code_generation")
+                    .or_else(|| config.llm.get("default"))
+                    .ok_or_else(|| anyhow!("No suitable LLM configuration found"))?
+                    .clone();
+
+                // Create the git manager and code generator
+                let git_manager: Arc<TokioMutex<dyn GitManager>> = Arc::new(TokioMutex::new(
+                    GitImplementation::new(&PathBuf::from(&config.agent.working_dir))
+                        .context("Failed to create git manager")?
+                ));
+
+                let code_generator = LlmCodeGenerator::new(
+                    llm_config,
+                    config.code_generation.clone(),
+                    config.llm_logging.clone(),
+                    Arc::clone(&git_manager),
+                    PathBuf::from(&config.agent.working_dir)
+                )?;
+
+                // Generate response
+                let response = code_generator.generate_git_operations_response(&query).await?;
+
+                println!("Git Operation Result:\n{}", response);
+
+                Ok::<_, anyhow::Error>(())
+            })?;
+    }
+
+    Ok(())
+}
+
+/// Determine which configuration file to use
+fn determine_config_path(cli_config: &str) -> Result<std::path::PathBuf> {
+    // First, try the config file specified by command line argument
+    let cli_path = Path::new(cli_config);
+    if cli_path.exists() {
+        return Ok(cli_path.to_path_buf());
+    }
+
+    // If the specified config doesn't exist and is the default value,
+    // try falling back to config.toml
+    if cli_config == "config.production.toml" {
+        let fallback_path = Path::new("config.toml");
+        if fallback_path.exists() {
+            debug!("Configuration file config.production.toml not found, using config.toml as fallback");
+            return Ok(fallback_path.to_path_buf());
+        }
+    }
+
+    // Otherwise return the original path which will likely cause a proper error
+    // when trying to read the file
+    Ok(cli_path.to_path_buf())
+}
+
+/// Load lines from a file, trimming whitespace
+fn load_lines_from_file(path: &PathBuf) -> Result<Vec<String>> {
+    let content = fs::read_to_string(path)
+        .context(format!("Failed to read file: {:?}", path))?;
+
+    Ok(content.lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect())
+}
+
+/// Print a banner with information about the agent
+fn print_banner() {
+    println!("\n====================================================");
+    println!("  BORG - Autonomous Self-Improving AI Agent v0.1.0");
+    println!("====================================================");
+    println!("  ✅ Core Agent            ✅ Ethics Framework");
+    println!("  ✅ Optimization Goals    ✅ Authentication");
+    println!("  ✅ Version Control       ✅ Code Generation");
+    println!("  ✅ Testing Framework     ✅ Resource Monitoring");
+    println!("  ✅ Strategic Planning    ✅ CLI Interface");
+    println!("====================================================\n");
+}
+
+/// Handle CLI commands
+async fn handle_commands(command: Option<Commands>, agent: Agent) -> Result<()> {
     // If no command is provided, run in default mode (full agent process)
-    if cli.command.is_none() {
+    if command.is_none() {
         print_banner();
         info!("Starting Borg - Autonomous Self-Improving AI Agent");
 
@@ -201,8 +321,11 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Initialize agent
+    agent.initialize().await?;
+
     // Handle commands
-    match cli.command.unwrap() {
+    match command.unwrap() {
         Commands::Improve => {
             println!("Running a single improvement iteration...");
             agent.run_improvement_iteration().await
@@ -351,54 +474,11 @@ async fn main() -> Result<()> {
             println!("Successfully loaded all strategic objectives");
             println!("Run 'borg plan generate' to create milestones and tactical goals");
         },
+        Commands::GitOperation { .. } => {
+            // This should not be reached as we handle GitOperation separately
+            unreachable!("Git operation should be handled separately");
+        },
     }
 
     Ok(())
-}
-
-/// Determine which configuration file to use
-fn determine_config_path(cli_config: &str) -> Result<std::path::PathBuf> {
-    // First, try the config file specified by command line argument
-    let cli_path = Path::new(cli_config);
-    if cli_path.exists() {
-        return Ok(cli_path.to_path_buf());
-    }
-
-    // If the specified config doesn't exist and is the default value,
-    // try falling back to config.toml
-    if cli_config == "config.production.toml" {
-        let fallback_path = Path::new("config.toml");
-        if fallback_path.exists() {
-            debug!("Configuration file config.production.toml not found, using config.toml as fallback");
-            return Ok(fallback_path.to_path_buf());
-        }
-    }
-
-    // Otherwise return the original path which will likely cause a proper error
-    // when trying to read the file
-    Ok(cli_path.to_path_buf())
-}
-
-/// Load lines from a file, trimming whitespace
-fn load_lines_from_file(path: &PathBuf) -> Result<Vec<String>> {
-    let content = fs::read_to_string(path)
-        .context(format!("Failed to read file: {:?}", path))?;
-
-    Ok(content.lines()
-        .map(|line| line.trim().to_string())
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .collect())
-}
-
-/// Print a banner with information about the agent
-fn print_banner() {
-    println!("\n====================================================");
-    println!("  BORG - Autonomous Self-Improving AI Agent v0.1.0");
-    println!("====================================================");
-    println!("  ✅ Core Agent            ✅ Ethics Framework");
-    println!("  ✅ Optimization Goals    ✅ Authentication");
-    println!("  ✅ Version Control       ✅ Code Generation");
-    println!("  ✅ Testing Framework     ✅ Resource Monitoring");
-    println!("  ✅ Strategic Planning    ✅ CLI Interface");
-    println!("====================================================\n");
 }

@@ -1,7 +1,7 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use git2::{Repository, BranchType, Signature, ObjectType};
-use log::{info, warn};
+use log::{info, warn, error};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -166,12 +166,10 @@ impl GitManager for GitImplementation {
         let repo = self.open_repo()?;
         let signature = self.create_signature()?;
 
-        // Find branch to merge
-        let branch = repo.find_branch(branch_name, BranchType::Local)
-            .with_context(|| format!("Failed to find branch: {}", branch_name))?;
-
-        // Get branch commit
-        let branch_commit = branch.get().peel_to_commit()?;
+        // Find the target branch
+        let branch_ref = format!("refs/heads/{}", branch_name);
+        let branch_reference = repo.find_reference(&branch_ref)?;
+        let branch_commit = branch_reference.peel_to_commit()?;
 
         // Get current branch
         let head = repo.head()?;
@@ -179,25 +177,124 @@ impl GitManager for GitImplementation {
 
         // Create merge
         let merge_base = repo.merge_base(head_commit.id(), branch_commit.id())?;
-        let _ancestor = repo.find_commit(merge_base)?;
+        let ancestor = repo.find_commit(merge_base)?;
 
-        // For now, we'll do a simple fast-forward merge if possible
-        // A more sophisticated implementation would handle non-fast-forward merges
+        // Improved merge handling for both fast-forward and non-fast-forward merges
+        info!("Attempting to merge branch '{}' into current branch", branch_name);
 
-        // Create merge commit
-        let tree_id = repo.index()?.write_tree()?;
-        let tree = repo.find_tree(tree_id)?;
+        // Check if this is a fast-forward merge
+        let is_ff = repo.graph_descendant_of(head_commit.id(), branch_commit.id())?;
 
-        repo.commit(
-            Some("HEAD"),
-            &signature,
-            &signature,
-            &format!("Merge branch '{}'", branch_name),
-            &tree,
-            &[&head_commit, &branch_commit],
-        )?;
+        if is_ff {
+            // Simple fast-forward merge (just move the HEAD reference)
+            info!("Performing fast-forward merge");
 
-        info!("Merged branch: {}", branch_name);
+            // Get the name of the current branch
+            let head_name = if head.is_branch() {
+                head.shorthand().unwrap_or("HEAD").to_string()
+            } else {
+                "HEAD".to_string()
+            };
+
+            // Move the branch reference to the new commit
+            let refname = format!("refs/heads/{}", head_name);
+            repo.reference(&refname, branch_commit.id(), true,
+                &format!("Fast-forward merge of branch '{}'", branch_name))?;
+
+            // Update the HEAD reference
+            repo.set_head(&refname)?;
+
+            // Checkout the working directory
+            repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))?;
+
+            info!("Fast-forward merge completed successfully");
+        } else {
+            // Non-fast-forward merge requires a merge commit
+            info!("Performing non-fast-forward merge");
+
+            // Set up the merge options
+            let mut merge_options = git2::MergeOptions::new();
+            merge_options.fail_on_conflict(false);
+
+            // Perform the merge analysis
+            // First annotate the branch commit to create an annotated commit
+            let annotated_commit = repo.reference_to_annotated_commit(
+                &repo.find_reference(&format!("refs/heads/{}", branch_name))?
+            )?;
+
+            let analysis = repo.merge_analysis(&[&annotated_commit])?;
+
+            if analysis.0.is_up_to_date() {
+                info!("Already up-to-date, no merge needed");
+                return Ok(());
+            }
+
+            if analysis.0.is_fast_forward() {
+                // This shouldn't happen since we already checked for ff, but handle it anyway
+                info!("Analysis indicates fast-forward is possible, performing simple merge");
+
+                // Get the name of the current branch
+                let head_name = if head.is_branch() {
+                    head.shorthand().unwrap_or("HEAD").to_string()
+                } else {
+                    "HEAD".to_string()
+                };
+
+                // Move the branch reference to the new commit
+                let refname = format!("refs/heads/{}", head_name);
+                repo.reference(&refname, branch_commit.id(), true,
+                    &format!("Fast-forward merge of branch '{}'", branch_name))?;
+
+                // Update the HEAD reference
+                repo.set_head(&refname)?;
+
+                // Checkout the working directory
+                repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))?;
+
+                info!("Fast-forward merge completed successfully");
+            } else {
+                // Perform a true merge commit
+                info!("Performing merge commit");
+
+                // Perform the merge
+                repo.merge(&[&annotated_commit], Some(&mut merge_options), None)?;
+
+                // Check for conflicts
+                if repo.index()?.has_conflicts() {
+                    // In a real production system, we'd implement conflict resolution
+                    // but for now we'll abort the merge if there are conflicts
+                    error!("Merge conflicts detected, aborting merge");
+                    repo.cleanup_state()?;
+                    return Err(anyhow!("Merge conflicts detected, manual resolution required"));
+                }
+
+                // Create the merge commit
+                let tree_id = repo.index()?.write_tree()?;
+                let tree = repo.find_tree(tree_id)?;
+
+                // Create parents array (original HEAD and the branch being merged)
+                let parent_commits = [&head_commit, &branch_commit];
+
+                // Create the merge commit
+                repo.commit(
+                    Some("HEAD"),
+                    &signature,
+                    &signature,
+                    &format!("Merge branch '{}'", branch_name),
+                    &tree,
+                    &parent_commits,
+                )?;
+
+                // Clean up the merge state
+                repo.cleanup_state()?;
+
+                // Checkout the working directory to update with the merged changes
+                repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))?;
+
+                info!("Non-fast-forward merge completed successfully");
+            }
+        }
+
         Ok(())
     }
 

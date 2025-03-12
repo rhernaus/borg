@@ -42,6 +42,14 @@ chrono = { version = "0.4.31", features = ["serde"] }
 uuid = { version = "1.4.1", features = ["v4"] }
 # Random number generation
 rand = "0.8.5"
+# Password hashing
+bcrypt = "0.15.0"
+# Base64 encoding/decoding
+base64 = "0.21.4"
+# Cryptography
+ring = "0.17.5"
+# Directory traversal
+walkdir = "2.3.3"
 
 [dev-dependencies]
 # Testing framework

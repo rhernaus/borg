@@ -24,6 +24,9 @@ pub trait CodeGenerator: Send + Sync {
     /// # Returns
     /// A result indicating success or failure
     async fn provide_feedback(&self, improvement: &CodeImprovement, success: bool, feedback: &str) -> Result<()>;
+
+    /// Generate a response for git operations
+    async fn generate_git_response(&self, query: &str) -> Result<String>;
 }
 
 /// The context for code generation
