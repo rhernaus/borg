@@ -180,9 +180,9 @@ The agent is approaching production readiness with several key features implemen
 - ✅ Robust Git integration with proper merge handling
 - ✅ Code complexity analysis with fallback mechanisms
 - ✅ Error handling metric evaluation
+- ✅ MongoDB integration for cloud-based persistent storage
 
 ### Pending Production Features:
-- ⬜ Database integration for persistent storage
 - ⬜ Comprehensive test coverage
 - ⬜ Performance optimization
 - ⬜ Deployment automation
@@ -279,6 +279,22 @@ The application uses configuration files to manage its settings. For security re
    ```
 
 4. The `config.production.toml` file is automatically ignored by Git to prevent accidentally committing your API keys.
+
+#### MongoDB Configuration
+
+Borg supports both file-based storage (default) and MongoDB for cloud-based persistent storage. To use MongoDB:
+
+1. Ensure you have access to a MongoDB instance (local or cloud-hosted)
+2. Update your `config.production.toml` file with MongoDB settings:
+
+```toml
+[mongodb]
+enabled = true                                # Set to true to use MongoDB instead of file-based storage
+connection_string = "mongodb://username:password@hostname:port"  # Your MongoDB connection string
+database = "borg"                             # Database name to use
+```
+
+Using MongoDB allows multiple instances of Borg to share the same database, making it ideal for distributed deployments or team environments.
 
 ## Roadmap
 

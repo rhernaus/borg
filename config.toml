@@ -72,3 +72,8 @@ include_full_prompts = true
 include_full_responses = true
 max_log_size_mb = 100
 log_files_to_keep = 10
+
+[mongodb]
+enabled = false                       # Set to true to use MongoDB instead of file-based storage
+connection_string = "mongodb://localhost:27017"  # Local MongoDB for development
+database = "borg"                     # Database name

@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 use std::process::Command;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use log::{info, debug, warn, error};
+use log::{info, warn};
 use rand;
 use chrono;
 use regex;

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use crate::core::ethics::{EthicsManager, EthicalImpactAssessment, RiskLevel};
+use crate::core::ethics::{EthicsManager, EthicalImpactAssessment};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use chrono::{DateTime, Utc};

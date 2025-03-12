@@ -26,6 +26,10 @@ pub struct Config {
     /// LLM logging configuration
     #[serde(default)]
     pub llm_logging: LlmLoggingConfig,
+
+    /// MongoDB configuration
+    #[serde(default)]
+    pub mongodb: MongoDbConfig,
 }
 
 /// LLM provider configuration
@@ -193,6 +197,22 @@ pub struct LlmLoggingConfig {
     pub log_files_to_keep: u64,
 }
 
+/// MongoDB configuration
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct MongoDbConfig {
+    /// MongoDB connection string
+    #[serde(default = "default_mongodb_connection_string")]
+    pub connection_string: String,
+
+    /// MongoDB database name
+    #[serde(default = "default_mongodb_database")]
+    pub database: String,
+
+    /// Whether to use MongoDB instead of file-based storage
+    #[serde(default = "default_use_mongodb")]
+    pub enabled: bool,
+}
+
 // Default values for optional configuration
 fn default_max_tokens() -> usize {
     1024
@@ -298,6 +318,19 @@ fn default_log_files_to_keep() -> u64 {
     10
 }
 
+// Default values for MongoDB configuration
+fn default_mongodb_connection_string() -> String {
+    "mongodb://localhost:27017".to_string()
+}
+
+fn default_mongodb_database() -> String {
+    "borg".to_string()
+}
+
+fn default_use_mongodb() -> bool {
+    false
+}
+
 impl Config {
     /// Load configuration from a file
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
@@ -364,6 +397,11 @@ impl Config {
                 include_full_responses: default_include_full_responses(),
                 max_log_size_mb: default_max_log_size_mb(),
                 log_files_to_keep: default_log_files_to_keep(),
+            },
+            mongodb: MongoDbConfig {
+                connection_string: default_mongodb_connection_string(),
+                database: default_mongodb_database(),
+                enabled: default_use_mongodb(),
             },
         }
     }

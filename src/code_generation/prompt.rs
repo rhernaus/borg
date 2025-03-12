@@ -395,6 +395,13 @@ Remember to approach Git operations with care and maintain the integrity of the 
         Self { templates }
     }
 
+    /// Get the system message template
+    pub fn create_system_message(&self) -> String {
+        self.templates.get("system_message")
+            .expect("System message template not found")
+            .clone()
+    }
+
     /// Create a prompt for code improvement
     pub fn create_improvement_prompt(&self, context: &CodeContext, current_code: &str) -> String {
         let template = self.templates.get("improvement").unwrap();

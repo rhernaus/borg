@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use log::{error, info, warn};
+use log::info;
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
@@ -96,6 +96,16 @@ impl PersistenceManager {
         Ok(goals)
     }
 
+    /// Save optimization goals to disk
+    pub fn save_optimization_goals(&self, goals: &[OptimizationGoal]) -> Result<()> {
+        self.save_goals(goals)
+    }
+
+    /// Load optimization goals from disk
+    pub fn load_optimization_goals(&self) -> Result<Vec<OptimizationGoal>> {
+        self.load_goals()
+    }
+
     /// Save the current state of the optimization manager
     pub async fn save_optimization_manager(&self, optimization_manager: &Arc<Mutex<OptimizationManager>>) -> Result<()> {
         let manager = optimization_manager.lock().await;
@@ -144,9 +154,9 @@ mod tests {
                     "test-001",
                     "Test Goal 1",
                     "This is a test goal",
-                    OptimizationCategory::General,
                 );
-                goal.priority = PriorityLevel::High;
+                goal.category = OptimizationCategory::General;
+                goal.priority = PriorityLevel::High.into();
                 goal
             },
             {
@@ -154,9 +164,9 @@ mod tests {
                     "test-002",
                     "Test Goal 2",
                     "This is another test goal",
-                    OptimizationCategory::Performance,
                 );
-                goal.priority = PriorityLevel::Medium;
+                goal.category = OptimizationCategory::Performance;
+                goal.priority = PriorityLevel::Medium.into();
                 goal
             },
         ];

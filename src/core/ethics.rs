@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use log::{info, warn, error};
-use std::collections::HashMap;
-use chrono::{DateTime, Utc};
+use log::info;
 
 /// Fundamental principles that guide the AI's behavior and decision-making
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

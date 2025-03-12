@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use log::{info, warn};
+use log::info;
 use anyhow::{Result, anyhow};
 use uuid::Uuid;
 

@@ -5,7 +5,6 @@ use std::time::{Duration, Instant};
 use sysinfo::{System, SystemExt, ProcessExt, CpuExt};
 use tokio;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-use std::sync::atomic::AtomicU64;
 use std::sync::Mutex;
 
 use crate::core::error::BorgError;

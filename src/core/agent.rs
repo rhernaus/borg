@@ -1,34 +1,30 @@
-use anyhow::{Context, Result};
-use log::{error, info, warn};
+use anyhow::{Context, Result, anyhow};
+use log::{info, debug, warn, error};
 use std::path::{PathBuf, Path};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use chrono;
-use git2::{Repository, Signature};
-use pathdiff;
-use anyhow::anyhow;
 use std::fs;
-use regex;
-use uuid;
+use git2::{Repository, Signature};
 use walkdir;
 use serde_json;
 
 use crate::code_generation::generator::CodeGenerator;
 use crate::code_generation::llm_generator::LlmCodeGenerator;
-use crate::core::config::Config;
-use crate::core::ethics::{EthicsManager, FundamentalPrinciple};
+use crate::core::config::{Config, LlmConfig};
+use crate::core::ethics::EthicsManager;
 use crate::core::optimization::{OptimizationManager, OptimizationGoal, OptimizationCategory, GoalStatus, PriorityLevel};
 use crate::core::authentication::{AuthenticationManager, AccessRole};
 use crate::core::persistence::PersistenceManager;
 use crate::resource_monitor::monitor::ResourceMonitor;
-use crate::resource_monitor::system::SystemMonitor;
+use crate::resource_monitor::monitor::SystemResourceMonitor;
 use crate::testing::test_runner::TestRunner;
-use crate::testing::factory::TestRunnerFactory;
+use crate::testing::simple::SimpleTestRunner;
 use crate::version_control::git::GitManager;
 use crate::version_control::git_implementation::GitImplementation;
-use crate::core::planning::{StrategicPlanningManager, StrategicObjective};
+use crate::core::planning::{StrategicPlanningManager, StrategicObjective, StrategicPlan};
 use crate::core::strategy::{ActionType, Plan, StrategyManager};
 use crate::core::strategies::CodeImprovementStrategy;
+use crate::database::DatabaseManager;
 
 /// The main agent structure that coordinates the self-improvement process
 pub struct Agent {
@@ -62,6 +58,9 @@ pub struct Agent {
     /// Persistence manager for saving/loading goals
     persistence_manager: PersistenceManager,
 
+    /// Database manager for persistent storage
+    database_manager: Option<Arc<DatabaseManager>>,
+
     /// Strategic planning manager
     strategic_planning_manager: Arc<Mutex<StrategicPlanningManager>>,
 
@@ -72,77 +71,93 @@ pub struct Agent {
 impl Agent {
     /// Create a new agent with the given configuration
     pub async fn new(config: Config) -> Result<Self> {
-        // Create working directory if it doesn't exist
+        info!("Initializing agent with working directory: {}", config.agent.working_dir);
+
+        // Create the working directory if it doesn't exist
         let working_dir = PathBuf::from(&config.agent.working_dir);
         std::fs::create_dir_all(&working_dir)
-            .with_context(|| format!("Failed to create working directory: {:?}", working_dir))?;
+            .context(format!("Failed to create working directory: {:?}", working_dir))?;
 
-        // Create the git manager
+        // Create logs directory for LLM if enabled
+        if config.llm_logging.enabled {
+            let log_dir = PathBuf::from(&config.llm_logging.log_dir);
+            std::fs::create_dir_all(&log_dir)
+                .context(format!("Failed to create log directory: {:?}", log_dir))?;
+        }
+
+        // Create data directory for persistence
+        let data_dir = working_dir.join("data");
+        std::fs::create_dir_all(&data_dir)
+            .context(format!("Failed to create data directory: {:?}", data_dir))?;
+
+        // Initialize components
         let git_manager: Arc<Mutex<dyn GitManager>> = Arc::new(Mutex::new(
             GitImplementation::new(&working_dir)
-                .context("Failed to create git manager")?
+                .context("Failed to create GitImplementation")?
         ));
 
-        // Create the resource monitor
+        let code_generator: Arc<dyn CodeGenerator> = {
+            // Get LLM configuration - first try specific config for code generation, then default
+            let llm_config = config.llm.get("code_generation")
+                .or_else(|| config.llm.get("default"))
+                .ok_or_else(|| anyhow!("No suitable LLM configuration found"))?
+                .clone();
+
+            Arc::new(LlmCodeGenerator::new(
+                llm_config,
+                config.code_generation.clone(),
+                config.llm_logging.clone(),
+                Arc::clone(&git_manager),
+                working_dir.clone(),
+            )?)
+        };
+
+        let test_runner: Arc<dyn TestRunner> = Arc::new(SimpleTestRunner::new(
+            &working_dir,
+        )?);
+
         let resource_monitor: Arc<Mutex<dyn ResourceMonitor>> = Arc::new(Mutex::new(
-            SystemMonitor::new()
-                .context("Failed to create resource monitor")?
+            SystemResourceMonitor::new()
         ));
 
-        // Create the ethics manager
-        let ethics_manager = Arc::new(Mutex::new(
-            EthicsManager::new()
-        ));
+        let ethics_manager = Arc::new(Mutex::new(EthicsManager::new()));
 
-        // Create the authentication manager
-        let authentication_manager = Arc::new(Mutex::new(
-            AuthenticationManager::new()
-        ));
-
-        // Create the optimization manager with the ethics manager
         let optimization_manager = Arc::new(Mutex::new(
             OptimizationManager::new(Arc::clone(&ethics_manager))
         ));
 
-        // Create the persistence manager
-        let data_dir = working_dir.join("data");
+        let authentication_manager = Arc::new(Mutex::new(
+            AuthenticationManager::new()
+        ));
+
         let persistence_manager = PersistenceManager::new(&data_dir)
             .context("Failed to create persistence manager")?;
 
-        // Create the code generator
-        // Use the code_generation LLM config if available, otherwise fall back to default
-        let llm_config = config.llm.get("code_generation")
-            .or_else(|| config.llm.get("default"))
-            .ok_or_else(|| anyhow::anyhow!("No suitable LLM configuration found"))?
-            .clone();
+        // Initialize the database manager
+        let database_manager = match DatabaseManager::new(&data_dir, &config).await {
+            Ok(manager) => {
+                info!("Database manager initialized successfully");
+                Some(Arc::new(manager))
+            },
+            Err(e) => {
+                warn!("Failed to initialize database manager: {}", e);
+                warn!("Proceeding without database manager");
+                None
+            }
+        };
 
-        let workspace = working_dir.clone();
-        let code_gen_config = config.code_generation.clone();
-        let llm_logging_config = config.llm_logging.clone();
-
-        let code_generator: Arc<dyn CodeGenerator> = Arc::new(
-            LlmCodeGenerator::new(llm_config, code_gen_config, llm_logging_config, Arc::clone(&git_manager), workspace.clone())
-                .context("Failed to create code generator")?
-        );
-
-        // Create the test runner
-        let test_runner: Arc<dyn TestRunner> = TestRunnerFactory::create(&config, &working_dir)
-            .context("Failed to create test runner")?;
-
-        // Create strategic planning manager
         let strategic_planning_manager = Arc::new(Mutex::new(
             StrategicPlanningManager::new(
-                optimization_manager.clone(),
-                ethics_manager.clone(),
-                &data_dir.join("planning").to_string_lossy(),
+                Arc::clone(&optimization_manager),
+                Arc::clone(&ethics_manager),
+                &data_dir.to_string_lossy(),
             )
         ));
 
-        // Create the strategy manager
         let strategy_manager = Arc::new(Mutex::new(
             StrategyManager::new(
-                authentication_manager.clone(),
-                ethics_manager.clone(),
+                Arc::clone(&authentication_manager),
+                Arc::clone(&ethics_manager),
             )
         ));
 
@@ -157,12 +172,19 @@ impl Agent {
             optimization_manager,
             authentication_manager,
             persistence_manager,
+            database_manager,
             strategic_planning_manager,
             strategy_manager,
         };
 
-        // Register strategies
+        // Initialize the repository if needed
+        agent.initialize_git_repository().await?;
+
+        // Register built-in strategies
         agent.register_strategies().await?;
+
+        // Load goals from disk
+        agent.load_goals_from_disk().await?;
 
         Ok(agent)
     }
@@ -1369,38 +1391,81 @@ impl Agent {
         Ok(true)
     }
 
-    /// Load goals from disk
-    async fn load_goals_from_disk(&self) -> Result<()> {
-        info!("Loading optimization goals from disk");
+    /// Load optimization goals from disk
+    pub async fn load_goals_from_disk(&self) -> Result<()> {
+        // First try to load from database if available
+        if let Some(db_manager) = &self.database_manager {
+            match db_manager.goals().get_all().await {
+                Ok(records) if !records.is_empty() => {
+                    let goals: Vec<OptimizationGoal> = records.into_iter()
+                        .map(|record| record.entity().clone())
+                        .collect();
 
-        match self.persistence_manager.load_into_optimization_manager(&self.optimization_manager).await {
-            Ok(_) => {
-                let optimization_manager = self.optimization_manager.lock().await;
-                let goals = optimization_manager.get_all_goals();
-                info!("Successfully loaded {} goals from disk", goals.len());
+                    let mut optimization_manager = self.optimization_manager.lock().await;
+                    for goal in goals {
+                        optimization_manager.add_goal(goal);
+                    }
+
+                    info!("Loaded {} optimization goals from database", optimization_manager.get_all_goals().len());
+                    return Ok(());
+                },
+                Ok(_) => {
+                    debug!("No optimization goals found in database");
+                },
+                Err(e) => {
+                    warn!("Failed to load optimization goals from database: {}", e);
+                }
+            }
+        }
+
+        // Fall back to persistence manager
+        match self.persistence_manager.load_optimization_goals() {
+            Ok(goals) => {
+                let mut optimization_manager = self.optimization_manager.lock().await;
+                for goal in goals {
+                    optimization_manager.add_goal(goal);
+                }
+
+                info!("Loaded {} optimization goals from persistence manager",
+                    optimization_manager.get_all_goals().len());
                 Ok(())
             },
             Err(e) => {
-                warn!("Failed to load goals from disk: {}", e);
-                warn!("Starting with empty goals");
-                Ok(())
+                warn!("Failed to load optimization goals from disk: {}", e);
+                Ok(()) // Return Ok to continue even if loading fails
             }
         }
     }
 
-    /// Save goals to disk
-    async fn save_goals_to_disk(&self) -> Result<()> {
-        info!("Saving optimization goals to disk");
+    /// Save optimization goals to disk
+    pub async fn save_goals_to_disk(&self) -> Result<()> {
+        // First, use the persistence manager as before
+        let goals = {
+            let optimization_manager = self.optimization_manager.lock().await;
+            optimization_manager.get_all_goals().to_vec()
+        };
 
-        // Save optimization goals
-        self.persistence_manager.save_optimization_manager(&self.optimization_manager).await
-            .context("Failed to save optimization goals to disk")?;
+        self.persistence_manager.save_optimization_goals(&goals)
+            .context("Failed to save optimization goals with persistence manager")?;
 
-        info!("Successfully saved goals to disk");
-
-        // Also save the strategic plan
-        let planning_manager = self.strategic_planning_manager.lock().await;
-        planning_manager.save_to_disk().await?;
+        // If database manager is available, also save to database
+        if let Some(db_manager) = &self.database_manager {
+            for goal in &goals {
+                match db_manager.goals().update(goal.clone(), None).await {
+                    Ok(_) => debug!("Updated goal {} in database", goal.id),
+                    Err(e) => {
+                        // If update fails, try to insert
+                        match db_manager.goals().insert(goal.clone()).await {
+                            Ok(_) => debug!("Inserted goal {} in database", goal.id),
+                            Err(e2) => {
+                                error!("Failed to save goal {} to database: update error: {}, insert error: {}",
+                                    goal.id, e, e2);
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
@@ -1431,6 +1496,7 @@ impl Agent {
             self.test_runner.clone(),
             self.git_manager.clone(),
             self.authentication_manager.clone(),
+            self.optimization_manager.clone(),
         );
 
         strategy_manager.register_strategy(code_improvement_strategy);
@@ -1559,6 +1625,109 @@ impl Agent {
             }
         }
     }
+
+    /// Get the number of active goals
+    pub async fn get_active_goal_count(&self) -> Result<usize> {
+        let optimization_manager = self.optimization_manager.lock().await;
+        Ok(optimization_manager.get_all_goals().len())
+    }
+
+    /// List all strategic objectives
+    pub async fn list_strategic_objectives(&self) -> Vec<StrategicObjective> {
+        if let Some(db_manager) = &self.database_manager {
+            match futures::executor::block_on(db_manager.objectives().get_all()) {
+                Ok(records) => {
+                    records.into_iter()
+                        .map(|record| record.entity().clone())
+                        .collect()
+                },
+                Err(e) => {
+                    error!("Error retrieving strategic objectives from database: {}", e);
+                    Vec::new()
+                }
+            }
+        } else {
+            // Fall back to the in-memory objectives from the strategic planning manager
+            let planning_manager = self.strategic_planning_manager.lock().await;
+            planning_manager.get_plan().objectives.clone()
+        }
+    }
+
+    /// Generate a strategic plan
+    pub async fn generate_strategic_plan(&self) -> Result<()> {
+        info!("Generating strategic plan using LLM integration");
+        let mut planning_manager = self.strategic_planning_manager.lock().await;
+
+        // Run the planning cycle with LLM integration
+        planning_manager.run_planning_cycle().await?;
+
+        // Log the successful generation
+        info!("Strategic plan generated successfully with LLM integration");
+
+        // Save to the database if available
+        if let Some(db_manager) = &self.database_manager {
+            match db_manager.save_plan(planning_manager.get_plan().clone()).await {
+                Ok(_) => {
+                    info!("Saved strategic plan to MongoDB database");
+                },
+                Err(e) => {
+                    warn!("Failed to save strategic plan to database: {}", e);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get the current strategic plan from the database
+    pub async fn get_current_strategic_plan(&self) -> Option<StrategicPlan> {
+        if let Some(db_manager) = &self.database_manager {
+            match db_manager.get_current_plan().await {
+                Ok(Some(plan)) => Some(plan),
+                Ok(None) => {
+                    debug!("No current strategic plan found in database");
+                    None
+                },
+                Err(e) => {
+                    error!("Error retrieving strategic plan from database: {}", e);
+                    None
+                }
+            }
+        } else {
+            // Fall back to the in-memory plan from the strategic planning manager
+            let planning_manager = self.strategic_planning_manager.lock().await;
+            Some(planning_manager.get_plan().clone())
+        }
+    }
+
+    /// Save a strategic plan to the database
+    pub async fn save_strategic_plan(&self, plan: StrategicPlan) -> Result<()> {
+        if let Some(db_manager) = &self.database_manager {
+            db_manager.save_full_plan(&plan).await
+                .context("Failed to save strategic plan to database")?;
+            Ok(())
+        } else {
+            // Fall back to the in-memory plan in the strategic planning manager
+            let mut planning_manager = self.strategic_planning_manager.lock().await;
+            planning_manager.set_plan(plan);
+            planning_manager.save_to_disk().await
+                .context("Failed to save strategic plan to disk")?;
+            Ok(())
+        }
+    }
+
+    /// Generate a progress report
+    pub async fn generate_progress_report(&self) -> Result<String> {
+        self.generate_strategic_plan_report().await
+    }
+
+    /// Get the LLM config for planning
+    pub fn get_planning_llm_config(&self) -> Option<LlmConfig> {
+        // Try to get the planning-specific LLM config first
+        self.config.llm.get("planning")
+            .or_else(|| self.config.llm.get("default"))
+            .cloned()
+    }
 }
 
 // Implementation of the main agent loop that orchestrates the optimization process
@@ -1632,8 +1801,42 @@ impl Agent {
             // No initialize method, nothing to do
         }
 
-        // Load strategic planning data
-        {
+        // Set up the planning manager with the right LLM config
+        let planning_llm_config = self.get_planning_llm_config();
+        let mut planning_manager = self.strategic_planning_manager.lock().await;
+
+        // Set the LLM config if available
+        if let Some(config) = planning_llm_config {
+            planning_manager.set_llm_config(config);
+        }
+
+        // Set the LLM logging config
+        planning_manager.set_llm_logging_config(self.config.llm_logging.clone());
+
+        // Release the lock before potentially long operations
+        drop(planning_manager);
+
+        // Load strategic planning data - if using MongoDB, load from there first
+        if let Some(db_manager) = &self.database_manager {
+            match db_manager.get_current_plan().await {
+                Ok(Some(plan)) => {
+                    info!("Loaded strategic plan from MongoDB");
+                    let mut planning_manager = self.strategic_planning_manager.lock().await;
+                    planning_manager.set_plan(plan);
+                },
+                Ok(None) => {
+                    info!("No strategic plan found in MongoDB, checking file system");
+                    let mut planning_manager = self.strategic_planning_manager.lock().await;
+                    planning_manager.load_from_disk().await?;
+                },
+                Err(e) => {
+                    warn!("Failed to load strategic plan from MongoDB: {} - falling back to file system", e);
+                    let mut planning_manager = self.strategic_planning_manager.lock().await;
+                    planning_manager.load_from_disk().await?;
+                }
+            }
+        } else {
+            // If not using MongoDB, load from disk
             let mut planning_manager = self.strategic_planning_manager.lock().await;
             planning_manager.load_from_disk().await?;
         }
@@ -1719,17 +1922,76 @@ impl Agent {
         // Generate milestones for this objective in a separate transaction
         let mut planning_manager = self.strategic_planning_manager.lock().await;
 
-        let milestones = planning_manager.generate_milestones_for_objective(&objective).await?;
+        // Add timeout to milestone generation
+        let milestone_result = tokio::time::timeout(
+            std::time::Duration::from_secs(5), // 5 second timeout
+            planning_manager.generate_milestones_for_objective(&objective)
+        ).await;
+
+        let milestones = match milestone_result {
+            Ok(Ok(milestones)) => milestones,
+            Ok(Err(e)) => {
+                warn!("Error generating milestones: {} - continuing without milestones", e);
+                Vec::new()
+            },
+            Err(_) => {
+                warn!("Milestone generation timed out after 5 seconds - continuing without milestones");
+                Vec::new()
+            }
+        };
 
         for milestone in milestones {
             planning_manager.add_milestone(milestone);
         }
 
-        // Save the strategic plan
-        planning_manager.save_to_disk().await?;
+        // Get the current plan to save it
+        let plan = planning_manager.get_plan().clone();
 
-        info!("Added strategic objective: {} with {} key results and {} constraints",
-            id, objective.key_results.len(), objective.constraints.len());
+        // Release the lock before potentially long-running operations
+        drop(planning_manager);
+
+        // Save the strategic plan - prioritize database if available
+        if let Some(db_manager) = &self.database_manager {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(3), // 3 second timeout
+                db_manager.save_plan(plan)
+            ).await {
+                Ok(Ok(_)) => {
+                    info!("Saved strategic plan to MongoDB database");
+                },
+                Ok(Err(e)) => {
+                    warn!("Failed to save strategic plan to MongoDB: {} - falling back to file system", e);
+                    // Fall back to file system
+                    let mut planning_manager = self.strategic_planning_manager.lock().await;
+                    if let Err(e) = tokio::time::timeout(
+                        std::time::Duration::from_secs(3), // 3 second timeout
+                        planning_manager.save_to_disk()
+                    ).await {
+                        warn!("Saving plan to disk timed out: {} - continuing anyway", e);
+                    }
+                },
+                Err(_) => {
+                    warn!("Save to MongoDB timed out - falling back to file system");
+                    // Fall back to file system
+                    let mut planning_manager = self.strategic_planning_manager.lock().await;
+                    if let Err(e) = tokio::time::timeout(
+                        std::time::Duration::from_secs(3), // 3 second timeout
+                        planning_manager.save_to_disk()
+                    ).await {
+                        warn!("Saving plan to disk timed out: {} - continuing anyway", e);
+                    }
+                }
+            }
+        } else {
+            // If not using MongoDB, save to disk
+            let mut planning_manager = self.strategic_planning_manager.lock().await;
+            if let Err(e) = tokio::time::timeout(
+                std::time::Duration::from_secs(3), // 3 second timeout
+                planning_manager.save_to_disk()
+            ).await {
+                warn!("Saving plan to disk timed out: {} - continuing anyway", e);
+            }
+        }
 
         Ok(())
     }

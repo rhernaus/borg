@@ -2,13 +2,13 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use log::info;
 use std::sync::Arc;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use uuid::Uuid;
 use regex::Regex;
 use tokio::sync::Mutex;
 use std::collections::HashMap;
 
-use crate::code_generation::generator::{CodeContext, CodeGenerator, CodeImprovement, FileChange, PreviousAttempt};
+use crate::code_generation::generator::{CodeContext, CodeGenerator, CodeImprovement, FileChange};
 use crate::code_generation::llm::{LlmFactory, LlmProvider};
 use crate::code_generation::prompt::PromptManager;
 use crate::code_generation::llm_tool::{
@@ -492,6 +492,86 @@ impl LlmCodeGenerator {
             Ok(response)
         }
     }
+
+    /// Generate a commit message based on code changes
+    pub async fn create_commit_message(&self, improvement: &CodeImprovement, goal_id: &str, branch_name: &str) -> Result<String> {
+        let prompt = self.prompt_manager.create_system_message();
+
+        // Build a list of changed files
+        let mut changed_files_desc = String::new();
+        for file in &improvement.target_files {
+            changed_files_desc.push_str(&format!("- {}\n", file.file_path));
+        }
+
+        // Create a description of the changes
+        let query = format!(
+            "I need a Git commit message for the following changes:\n\n\
+            Goal ID: {}\n\
+            Branch: {}\n\
+            Task: {}\n\n\
+            Changes made to these files:\n{}\n\n\
+            Explanation of changes:\n{}\n\n\
+            Please write a clear, concise, and informative commit message that follows Git best practices. \
+            The message should have a brief summary (50-72 chars) as the first line, followed by a blank line and \
+            a more detailed explanation if needed. Focus on WHY the change was made, not just WHAT was changed. \
+            Do not include the word 'commit' in the message.",
+            goal_id,
+            branch_name,
+            improvement.task,
+            changed_files_desc,
+            improvement.explanation
+        );
+
+        // Combine the prompt with the user's query
+        let full_prompt = format!("{}\n\n{}", prompt, query);
+
+        // Direct LLM call for commit message
+        let response = self.llm.generate(&full_prompt, Some(1024), Some(0.4)).await?;
+
+        // Extract just the commit message (removing any explanations the LLM might add)
+        let commit_message = if response.contains("```") {
+            // If the response includes code blocks, extract the content
+            let re = Regex::new(r"```(?:commit|git)?\s*\n([\s\S]*?)\n```").unwrap();
+            if let Some(cap) = re.captures(&response) {
+                cap[1].trim().to_string()
+            } else {
+                response.trim().to_string()
+            }
+        } else {
+            response.trim().to_string()
+        };
+
+        Ok(commit_message)
+    }
+
+    /// Handle git merge operations
+    pub async fn process_merge_operation(&self, branch_name: &str, target_branch: &str, summary: &str) -> Result<String> {
+        let prompt = self.prompt_manager.create_system_message();
+
+        // Create a description for the merge operation
+        let query = format!(
+            "I need assistance with a Git merge operation:\n\n\
+            Merging branch '{}' into branch '{}'\n\n\
+            Summary of changes being merged:\n{}\n\n\
+            Please provide guidance on performing this merge. Consider the following:\n\
+            1. Is this merge safe to proceed with?\n\
+            2. What conflicts might arise and how should they be handled?\n\
+            3. What should the merge commit message be?\n\
+            4. Are there any post-merge steps that should be taken?\n\
+            5. Should the source branch be deleted after merging?",
+            branch_name,
+            target_branch,
+            summary
+        );
+
+        // Combine the prompt with the query
+        let full_prompt = format!("{}\n\n{}", prompt, query);
+
+        // Use the git operations prompt approach
+        let response = self.generate_git_operations_response(&query).await?;
+
+        Ok(response)
+    }
 }
 
 #[async_trait]
@@ -594,5 +674,15 @@ impl CodeGenerator for LlmCodeGenerator {
     /// Generate a response for git operations
     async fn generate_git_response(&self, query: &str) -> Result<String> {
         self.generate_git_operations_response(query).await
+    }
+
+    /// Generate a git commit message based on code changes
+    async fn generate_commit_message(&self, improvement: &CodeImprovement, goal_id: &str, branch_name: &str) -> Result<String> {
+        self.create_commit_message(improvement, goal_id, branch_name).await
+    }
+
+    /// Handle git merge operations
+    async fn handle_merge_operation(&self, branch_name: &str, target_branch: &str, summary: &str) -> Result<String> {
+        self.process_merge_operation(branch_name, target_branch, summary).await
     }
 }

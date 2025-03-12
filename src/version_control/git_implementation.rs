@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use git2::{Repository, BranchType, Signature, ObjectType};
-use log::{info, warn, error};
+use log::{info, error};
 use std::fs;
 use std::path::{Path, PathBuf};
 

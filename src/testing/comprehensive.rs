@@ -1,16 +1,14 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
-use tokio::process::Command as TokioCommand;
-use tokio::time::timeout;
 
 use crate::core::error::BorgError;
 use crate::testing::test_runner::{TestRunner, TestResult, TestMetrics};
-use crate::testing::result_analyzer::{TestAnalysis, TestResultAnalyzer, TestError, ErrorType};
+use crate::testing::result_analyzer::{TestAnalysis, TestResultAnalyzer, TestError};
 
 /// The stage of testing being performed
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

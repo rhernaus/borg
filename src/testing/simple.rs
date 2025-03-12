@@ -3,8 +3,7 @@ use async_trait::async_trait;
 use log::{info, warn};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{Duration, Instant};
-use tokio::time::timeout;
+use std::time::Instant;
 
 use crate::core::error::BorgError;
 use crate::testing::test_runner::{TestRunner, TestResult, TestMetrics};

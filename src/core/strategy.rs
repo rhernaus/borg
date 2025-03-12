@@ -5,9 +5,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use serde::{Serialize, Deserialize};
-use uuid::Uuid;
 
-use crate::core::optimization::{OptimizationGoal, PriorityLevel};
+use crate::core::optimization::OptimizationGoal;
 use crate::core::ethics::EthicsManager;
 use crate::core::authentication::AuthenticationManager;
 

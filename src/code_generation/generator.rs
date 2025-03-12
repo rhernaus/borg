@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use anyhow::Result;
-use std::time::Duration;
 
 /// A trait representing a code generator that can propose code improvements
 #[async_trait]
@@ -27,6 +26,28 @@ pub trait CodeGenerator: Send + Sync {
 
     /// Generate a response for git operations
     async fn generate_git_response(&self, query: &str) -> Result<String>;
+
+    /// Generate a git commit message based on the code changes
+    ///
+    /// # Arguments
+    /// * `improvement` - The code improvement
+    /// * `goal_id` - The ID of the optimization goal
+    /// * `branch_name` - The name of the branch being committed
+    ///
+    /// # Returns
+    /// A result containing the generated commit message or an error
+    async fn generate_commit_message(&self, improvement: &CodeImprovement, goal_id: &str, branch_name: &str) -> Result<String>;
+
+    /// Handle git merge operations
+    ///
+    /// # Arguments
+    /// * `branch_name` - The name of the branch to merge
+    /// * `target_branch` - The name of the target branch (e.g., "main")
+    /// * `summary` - A summary of changes being merged
+    ///
+    /// # Returns
+    /// A result containing the merge description or an error
+    async fn handle_merge_operation(&self, branch_name: &str, target_branch: &str, summary: &str) -> Result<String>;
 }
 
 /// The context for code generation

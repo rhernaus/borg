@@ -11,10 +11,12 @@ default-run = "borg"
 # For async runtime
 tokio = { version = "1.30.0", features = ["full"] }
 # For HTTP requests to LLM APIs
-reqwest = { version = "0.11.20", features = ["json"] }
+reqwest = { version = "0.11.20", features = ["json", "stream"] }
 # JSON serialization/deserialization
 serde = { version = "1.0.188", features = ["derive"] }
 serde_json = "1.0.107"
+# MongoDB database
+mongodb = { version = "2.8.0", features = ["tokio-runtime"] }
 # Git operations
 git2 = "0.17.2"
 pathdiff = "0.2.1"
@@ -33,6 +35,7 @@ config = "0.13.3"
 toml = "0.8.0"
 # For async operations
 futures = "0.3.28"
+futures-util = "0.3.28"
 async-trait = "0.1.73"
 # Regular expressions
 regex = "1.9.5"
