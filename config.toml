@@ -77,3 +77,45 @@ log_files_to_keep = 10
 enabled = false                       # Set to true to use MongoDB instead of file-based storage
 connection_string = "mongodb://localhost:27017"  # Local MongoDB for development
 database = "borg"                     # Database name
+
+# 🔐 SECURITY CONFIGURATION
+# This section configures the authentication system that fixes the critical security vulnerability
+[authentication]
+# IMPORTANT: Generate strong, unique API keys for production use
+# Example generation: openssl rand -hex 32
+api_keys = [
+    "your-secure-api-key-here-replace-with-actual-key",
+    # Add additional API keys as needed for different users/services
+    # "another-api-key-for-service-account",
+]
+
+# Session configuration
+session_timeout_seconds = 3600        # 1 hour session timeout
+max_sessions_per_key = 5              # Maximum concurrent sessions per API key
+session_cleanup_interval_seconds = 300 # Clean up expired sessions every 5 minutes
+
+# Rate limiting (prevents abuse)
+rate_limit_per_minute = 100           # Requests per minute per API key
+
+# Security policies
+require_authentication = true         # CRITICAL: Must be true for production
+default_role = "Developer"            # Default role for authenticated users
+                                     # Options: "User", "Developer", "Administrator", "Creator"
+
+# Failed authentication protection
+max_failed_attempts = 5               # Lock out after 5 failed attempts
+lockout_duration_seconds = 900        # 15 minute lockout period
+
+# Audit logging
+log_auth_events = true                # Log all authentication events
+auth_log_dir = "./logs/auth"         # Directory for authentication logs
+
+# 🚨 SECURITY NOTES:
+# 1. NEVER commit real API keys to version control
+# 2. Use environment variables for production API keys:
+#    api_keys = ["${BORG_API_KEY_1}", "${BORG_API_KEY_2}"]
+# 3. Set require_authentication = true in production
+# 4. Generate cryptographically secure API keys (min 32 characters)
+# 5. Rotate API keys regularly
+# 6. Monitor authentication logs for suspicious activity
+# 7. Use HTTPS when deploying over network
