@@ -7,8 +7,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// Categories of optimization goals that the agent can pursue
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum OptimizationCategory {
     /// Improve code performance (speed, memory usage, etc.)
     Performance,
@@ -54,7 +53,6 @@ impl fmt::Display for OptimizationCategory {
         }
     }
 }
-
 
 /// Priority level for optimization goals
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -681,10 +679,7 @@ pub fn get_conflicting_goals(goals: &[OptimizationGoal]) -> HashMap<String, Vec<
             .collect();
 
         for tag in file_paths {
-            file_goals
-                .entry(tag)
-                .or_default()
-                .push(goal.id.clone());
+            file_goals.entry(tag).or_default().push(goal.id.clone());
         }
     }
 

@@ -1223,8 +1223,7 @@ impl StrategicPlanningManager {
 
         // 4. Generate milestones for any objectives without them
         // Clone the objectives first to avoid borrow checker issues
-        let objectives_to_process: Vec<StrategicObjective> =
-            self.plan.objectives.to_vec();
+        let objectives_to_process: Vec<StrategicObjective> = self.plan.objectives.to_vec();
 
         for objective in &objectives_to_process {
             let existing_milestones = self.plan.get_milestones_for_objective(&objective.id);

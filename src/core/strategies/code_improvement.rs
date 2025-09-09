@@ -94,8 +94,7 @@ impl CodeImprovementStrategy {
             file_paths,
             requirements: Some(format!(
                 "Category: {}\nPriority: {}",
-                goal.category,
-                goal.priority
+                goal.category, goal.priority
             )),
             previous_attempts: Vec::new(), // For now, we don't track previous attempts
             file_contents: None,

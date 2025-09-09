@@ -147,9 +147,9 @@ impl LlmLogger {
     /// Write text to the log file
     fn write_to_log(&self, text: &str) -> Result<()> {
         if let Some(file) = &self.log_file {
-            let mut file_guard = file.lock().map_err(|_| {
-                io::Error::other("Failed to acquire lock on log file")
-            })?;
+            let mut file_guard = file
+                .lock()
+                .map_err(|_| io::Error::other("Failed to acquire lock on log file"))?;
 
             file_guard
                 .write_all(text.as_bytes())
