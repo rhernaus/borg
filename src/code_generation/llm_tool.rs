@@ -85,6 +85,7 @@ pub struct ToolResult {
 /// A tool that searches code
 pub struct CodeSearchTool {
     workspace: PathBuf,
+    #[allow(dead_code)]
     git_manager: Arc<Mutex<dyn GitManager>>,
 }
 
@@ -150,7 +151,7 @@ impl LlmTool for CodeSearchTool {
         match cmd.output() {
             Ok(output) => {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                let _stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
                 if stdout.is_empty() {
                     Ok(format!(
@@ -175,7 +176,7 @@ impl LlmTool for CodeSearchTool {
                     ))
                 }
             }
-            Err(e) => {
+            Err(_e) => {
                 // Fall back to git grep if ripgrep isn't available
                 let mut git_cmd = Command::new("git");
                 git_cmd
@@ -358,7 +359,7 @@ impl LlmTool for FindTestsTool {
         }
 
         // Get the file stem (name without extension)
-        let file_name = match file_path.file_name() {
+        let _file_name = match file_path.file_name() {
             Some(name) => name.to_string_lossy().to_string(),
             None => return Err(anyhow::anyhow!("Invalid file path")),
         };
@@ -563,7 +564,7 @@ impl LlmTool for DirectoryExplorationTool {
                     continue;
                 }
 
-                let rel_path = pathdiff::diff_paths(&entry_path, base_path)
+                let _rel_path = pathdiff::diff_paths(&entry_path, base_path)
                     .unwrap_or_else(|| entry.path().file_name().unwrap().into());
                 let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
 
@@ -626,6 +627,7 @@ impl LlmTool for DirectoryExplorationTool {
 /// A tool that shows git history for files
 pub struct GitHistoryTool {
     workspace: PathBuf,
+    #[allow(dead_code)]
     git_manager: Arc<Mutex<dyn GitManager>>,
 }
 
@@ -927,7 +929,7 @@ impl LlmTool for CompilationFeedbackTool {
                             format!("Output: {}\nErrors: {}", stdout, stderr)
                         }
                     }
-                    Err(e) => {
+                    Err(_e) => {
                         // Fallback to more basic validation
                         match toml::from_str::<toml::Value>(code) {
                             Ok(_) => "✅ Valid TOML file (basic check).".to_string(),
@@ -1066,19 +1068,13 @@ impl ModifyFileTool {
         let mut result = Vec::new();
 
         // Add lines before the edit
-        for i in 0..start_idx {
-            result.push(lines[i].to_string());
-        }
+        result.extend(lines.iter().take(start_idx).map(|s| s.to_string()));
 
         // Add the new content
-        for line in new_content.lines() {
-            result.push(line.to_string());
-        }
+        result.extend(new_content.lines().map(|s| s.to_string()));
 
         // Add lines after the edit
-        for i in end_idx..lines.len() {
-            result.push(lines[i].to_string());
-        }
+        result.extend(lines.iter().skip(end_idx).map(|s| s.to_string()));
 
         Ok(result.join("\n"))
     }

@@ -16,9 +16,11 @@ pub type DbResult<T> = Result<T, DatabaseError>;
 /// A MongoDB-based database for storing entities
 pub struct MongoDb<T: Entity + for<'a> Deserialize<'a> + Unpin> {
     /// MongoDB client
+    #[allow(dead_code)]
     client: Client,
 
     /// MongoDB database
+    #[allow(dead_code)]
     database: Database,
 
     /// MongoDB collection

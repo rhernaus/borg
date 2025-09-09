@@ -211,6 +211,7 @@ impl fmt::Display for RiskLevel {
 /// Central manager for ethical considerations
 pub struct EthicsManager {
     /// All fundamental principles
+    #[allow(dead_code)]
     principles: Vec<FundamentalPrinciple>,
 
     /// Current status of each obligation
@@ -327,7 +328,6 @@ impl EthicsManager {
         let mut affected_obligations = Vec::new();
         let mut obligation_impacts = Vec::new();
         let mut mitigations = Vec::new();
-        let mut risk_level = RiskLevel::Low;
 
         // Check for potential impacts on each fundamental principle
         // 1. Check for human dignity and autonomy concerns
@@ -349,10 +349,7 @@ impl EthicsManager {
             ));
             mitigations.push("Implement data minimization and encryption".to_string());
 
-            // Escalate risk level for privacy concerns
-            if risk_level < RiskLevel::Medium {
-                risk_level = RiskLevel::Medium;
-            }
+            // Escalate risk level for privacy concerns (overall assessment handled later)
         }
 
         // 3. Check for reliability impacts
@@ -401,7 +398,7 @@ impl EthicsManager {
         }
 
         // Perform risk level assessment based on the detected impacts
-        risk_level = assess_overall_risk_level(
+        let risk_level = assess_overall_risk_level(
             &affected_principles,
             &principle_impacts,
             description,
@@ -633,8 +630,8 @@ fn contains_keywords(text: &str, keywords: &[&str]) -> bool {
 /// Assess the overall risk level based on all impacts
 fn assess_overall_risk_level(
     affected_principles: &[FundamentalPrinciple],
-    principle_impacts: &[(FundamentalPrinciple, String)],
-    description: &str,
+    _principle_impacts: &[(FundamentalPrinciple, String)],
+    _description: &str,
     code_change: &str,
 ) -> RiskLevel {
     // Count the number of affected principles as a simple heuristic

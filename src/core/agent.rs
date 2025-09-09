@@ -70,6 +70,7 @@ pub struct Agent {
     strategy_manager: Arc<Mutex<StrategyManager>>,
 }
 
+#[allow(dead_code)]
 impl Agent {
     /// Create a new agent with the given configuration
     pub async fn new(config: Config) -> Result<Self> {
@@ -697,7 +698,7 @@ impl Agent {
         let parent_commit = self.find_branch_commit(&repo, branch_name)?;
 
         // Create the commit with or without parent
-        let commit_id = if let Some(parent) = parent_commit {
+        if let Some(parent) = parent_commit {
             repo.commit(
                 Some(&format!("refs/heads/{}", branch_name)),
                 &signature,
@@ -706,7 +707,7 @@ impl Agent {
                 &tree,
                 &[&parent],
             )
-            .context("Failed to create commit")?
+            .context("Failed to create commit")?;
         } else {
             repo.commit(
                 Some(&format!("refs/heads/{}", branch_name)),
@@ -716,8 +717,8 @@ impl Agent {
                 &tree,
                 &[],
             )
-            .context("Failed to create commit")?
-        };
+            .context("Failed to create commit")?;
+        }
 
         info!("Successfully applied changes for goal {}", goal.id);
         Ok(())
@@ -729,10 +730,10 @@ impl Agent {
         code: &str,
     ) -> Result<crate::code_generation::generator::CodeImprovement> {
         // Create a code generator instance
-        let code_gen = self.code_generator.clone();
+        let _code_gen = self.code_generator.clone();
 
         // Create a dummy context with the LLM code
-        let context = crate::code_generation::generator::CodeContext {
+        let _context = crate::code_generation::generator::CodeContext {
             task: "Apply changes".to_string(),
             requirements: None,
             file_paths: vec![],
@@ -874,6 +875,7 @@ impl Agent {
     }
 
     /// Evaluate the results of a code change
+    #[allow(clippy::cognitive_complexity)]
     async fn evaluate_results(
         &self,
         goal: &OptimizationGoal,
@@ -1071,7 +1073,7 @@ impl Agent {
     async fn evaluate_complexity_metric(
         &self,
         metric: &str,
-        goal: &OptimizationGoal,
+        _goal: &OptimizationGoal,
         branch: &str,
     ) -> Result<bool> {
         info!(
@@ -1263,6 +1265,7 @@ impl Agent {
     }
 
     /// Parse and evaluate an error handling metric
+    #[allow(clippy::cognitive_complexity)]
     async fn evaluate_error_handling_metric(&self, metric: &str, branch: &str) -> Result<bool> {
         // Extract the target value
         let target = extract_numeric_target(metric)?;
@@ -1328,7 +1331,7 @@ impl Agent {
 
             for line in &lines {
                 // Detect function declarations
-                if let Some(captures) = fn_regex.captures(line) {
+                if let Some(_captures) = fn_regex.captures(line) {
                     if in_function
                         && (current_function_returns_result || current_function_returns_option)
                     {
@@ -1436,7 +1439,7 @@ impl Agent {
     }
 
     /// Validate a security optimization goal
-    async fn validate_security_goal(&self, goal: &OptimizationGoal, branch: &str) -> Result<bool> {
+    async fn validate_security_goal(&self, _goal: &OptimizationGoal, branch: &str) -> Result<bool> {
         // Run security-specific tests and analysis
         let security_test_result = self
             .test_runner
@@ -2099,6 +2102,8 @@ impl Agent {
     }
 
     /// Add a strategic objective
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::cognitive_complexity)]
     pub async fn add_strategic_objective(
         &self,
         id: &str,
@@ -2225,6 +2230,7 @@ impl Agent {
 // Helper functions for metric evaluation
 
 /// Extract a numeric target from a metric string
+#[allow(dead_code)]
 fn extract_numeric_target(metric: &str) -> Result<f64> {
     // Look for patterns like "X > 80%" or "Y < 5"
     for part in metric.split_whitespace() {
@@ -2242,6 +2248,7 @@ fn extract_numeric_target(metric: &str) -> Result<f64> {
 }
 
 /// Extract a percentage from a string
+#[allow(dead_code)]
 fn extract_percentage(text: &str) -> Option<f64> {
     // Look for a pattern like "25% improvement" or "improved by 30%"
     for part in text.split_whitespace() {
@@ -2255,6 +2262,7 @@ fn extract_percentage(text: &str) -> Option<f64> {
 }
 
 /// Parse coverage percentage from test output
+#[allow(dead_code)]
 fn parse_coverage_percentage(output: &str) -> Result<f64> {
     // Look for lines containing "coverage" and a percentage
     for line in output.lines() {

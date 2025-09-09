@@ -349,6 +349,7 @@ pub struct StrategicPlanningManager {
     optimization_manager: Arc<Mutex<OptimizationManager>>,
 
     /// Reference to the ethics manager
+    #[allow(dead_code)]
     ethics_manager: Arc<Mutex<EthicsManager>>,
 
     /// Directory to store planning data
@@ -1138,7 +1139,7 @@ impl StrategicPlanningManager {
     }
 
     /// Establish dependencies between tactical goals based on milestone dependencies
-    fn establish_goal_dependencies(&self, goals: &mut Vec<OptimizationGoal>) {
+    fn establish_goal_dependencies(&self, goals: &mut [OptimizationGoal]) {
         // First, collect all the milestone dependencies and goal IDs
         let milestone_deps: Vec<(String, Vec<String>)> = goals
             .iter()

@@ -174,9 +174,11 @@ pub struct StrategyManager {
     strategies: Vec<Box<dyn Strategy>>,
 
     /// Authentication manager for permission checks
+    #[allow(dead_code)]
     auth_manager: Arc<Mutex<AuthenticationManager>>,
 
     /// Ethics manager for ethical validation
+    #[allow(dead_code)]
     ethics_manager: Arc<Mutex<EthicsManager>>,
 
     /// Cached compatibility scores for goals and strategies

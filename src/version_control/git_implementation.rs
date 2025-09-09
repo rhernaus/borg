@@ -179,7 +179,7 @@ impl GitManager for GitImplementation {
 
         // Create merge
         let merge_base = repo.merge_base(head_commit.id(), branch_commit.id())?;
-        let ancestor = repo.find_commit(merge_base)?;
+        let _ancestor = repo.find_commit(merge_base)?;
 
         // Improved merge handling for both fast-forward and non-fast-forward merges
         info!(

@@ -19,6 +19,7 @@ use crate::testing::test_runner::TestRunner;
 use crate::version_control::git::GitManager;
 
 /// Permissions for code-related operations
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 enum CodePermission {
     /// Permission to read code
@@ -46,9 +47,11 @@ pub struct CodeImprovementStrategy {
     code_generator: Arc<dyn CodeGenerator>,
 
     /// Test runner for validating changes
+    #[allow(dead_code)]
     test_runner: Arc<dyn TestRunner>,
 
     /// Git manager for version control
+    #[allow(dead_code)]
     git_manager: Arc<Mutex<dyn GitManager>>,
 
     /// Authentication manager for permission checks
@@ -79,6 +82,7 @@ impl CodeImprovementStrategy {
     }
 
     /// Create a code context from an optimization goal
+    #[allow(dead_code)]
     async fn create_code_context(&self, goal: &OptimizationGoal) -> Result<CodeContext> {
         // Get the file paths for the goal
         let file_paths: Vec<String> = goal
@@ -110,6 +114,7 @@ impl CodeImprovementStrategy {
     }
 
     /// Generate code improvements for a goal
+    #[allow(dead_code)]
     async fn generate_improvement(&self, goal: &OptimizationGoal) -> Result<String> {
         info!("Generating improvement for goal: {}", goal.id);
 
@@ -134,6 +139,7 @@ impl CodeImprovementStrategy {
     }
 
     /// Apply a code change to a branch
+    #[allow(dead_code)]
     async fn apply_change(
         &self,
         goal: &OptimizationGoal,
@@ -287,6 +293,7 @@ impl CodeImprovementStrategy {
     }
 
     /// Test a code change in a branch
+    #[allow(dead_code)]
     async fn test_change(&self, branch: &str) -> Result<bool> {
         let test_start = std::time::Instant::now();
         info!("Testing changes in branch {}", branch);
@@ -325,6 +332,7 @@ impl CodeImprovementStrategy {
     }
 
     /// Evaluate the results of a code change
+    #[allow(dead_code)]
     async fn evaluate_results(
         &self,
         goal: &OptimizationGoal,
@@ -377,7 +385,7 @@ impl CodeImprovementStrategy {
         info!("Executing step {} - {}", step.id, step.description);
 
         // Get the optimization goal
-        let goal = {
+        let _goal = {
             let manager = self
                 .optimization_manager
                 .try_lock()
@@ -563,6 +571,7 @@ impl CodeImprovementStrategy {
     }
 
     /// Extract file changes from LLM response
+    #[allow(dead_code)]
     fn parse_code_changes(
         &self,
         code: &str,
@@ -570,7 +579,7 @@ impl CodeImprovementStrategy {
         info!("Parsing code changes from LLM response");
 
         // Create a dummy context with the LLM code
-        let context = crate::code_generation::generator::CodeContext {
+        let _context = crate::code_generation::generator::CodeContext {
             task: "Apply changes".to_string(),
             requirements: None,
             file_paths: vec![],
@@ -898,6 +907,7 @@ impl CodeImprovementStrategy {
 
 impl CodeImprovementStrategy {
     /// Get the permissions required for a specific goal
+    #[allow(dead_code)]
     fn get_required_permissions_for_goal(&self, goal: &OptimizationGoal) -> Vec<CodePermission> {
         let mut permissions = vec![CodePermission::ReadCode];
 
@@ -933,7 +943,7 @@ impl CodeImprovementStrategy {
     /// Get the required permissions for a goal - private implementation
     fn get_required_permissions_for_goal_internal(
         &self,
-        goal: &OptimizationGoal,
+        _goal: &OptimizationGoal,
     ) -> Vec<ActionPermission> {
         // For code improvement, we need permissions to:
         // 1. Read code files
@@ -960,6 +970,7 @@ impl CodeImprovementStrategy {
         ]
     }
 
+    #[allow(dead_code)]
     fn get_permissions(&self) -> Vec<ActionPermission> {
         vec![
             ActionPermission {

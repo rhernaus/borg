@@ -397,13 +397,14 @@ impl LlmCodeGenerator {
         if context.test_files.is_none() && !context.file_paths.is_empty() {
             let mut test_files = Vec::new();
             let find_tests_tool = FindTestsTool::new(self.workspace.clone());
+            // Compile regex once outside the loop to avoid clippy::regex_creation_in_loops
+            let re = Regex::new(r"- (tests/[^\n]+|src/[^\n]+)").unwrap();
 
             for file_path in &context.file_paths {
                 let result = find_tests_tool.execute(&[file_path]).await;
                 if let Ok(result) = result {
                     if !result.contains("No test files found") {
-                        // Extract test file names from the result
-                        let re = Regex::new(r"- (tests/[^\n]+|src/[^\n]+)").unwrap();
+                        // Extract test file names from the result (regex compiled above)
                         for cap in re.captures_iter(&result) {
                             test_files.push(cap[1].to_string());
                         }
@@ -624,7 +625,7 @@ impl LlmCodeGenerator {
         target_branch: &str,
         summary: &str,
     ) -> Result<String> {
-        let prompt = self.prompt_manager.create_system_message();
+        let _prompt = self.prompt_manager.create_system_message();
 
         // Create a description for the merge operation
         let query = format!(
@@ -640,8 +641,7 @@ impl LlmCodeGenerator {
             branch_name, target_branch, summary
         );
 
-        // Combine the prompt with the query
-        let full_prompt = format!("{}\n\n{}", prompt, query);
+        // Combine the prompt with the query (not used; removed to satisfy clippy)
 
         // Use the git operations prompt approach
         let response = self.generate_git_operations_response(&query).await?;

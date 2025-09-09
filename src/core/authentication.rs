@@ -140,6 +140,7 @@ impl AuthenticationManager {
 }
 
 // Helper function to extract a value from PEM format
+#[allow(dead_code)]
 fn extract_public_key_from_pem(pem: &str) -> Result<Vec<u8>> {
     // Simplistic PEM parsing - proper implementation would use a crypto library
     let lines: Vec<&str> = pem

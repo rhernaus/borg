@@ -61,6 +61,7 @@ impl SystemMonitor {
     }
 
     /// Refresh system information
+    #[allow(dead_code)]
     fn refresh(&mut self) {
         self.system.refresh_all();
     }
@@ -75,6 +76,7 @@ impl SystemMonitor {
     }
 
     /// Update peak memory if current memory usage is higher
+    #[allow(dead_code)]
     fn update_peak_memory(&mut self, memory_mb: f64) {
         if memory_mb > self.peak_memory_mb {
             self.peak_memory_mb = memory_mb;
@@ -104,7 +106,6 @@ impl ResourceMonitor for SystemMonitor {
             if memory_mb > *peak {
                 *peak = memory_mb;
                 // Also update our local copy
-                let peak_memory_mb = memory_mb;
 
                 // We need a way to update the self.peak_memory_mb field here
                 // For now we'll use the shared value for everything

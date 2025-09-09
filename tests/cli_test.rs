@@ -93,6 +93,7 @@ fn run_command_in_dir<P: AsRef<Path>>(dir: P, args: &[&str]) -> (bool, String) {
 }
 
 // Helper function to run with environment variables set
+#[allow(dead_code)]
 fn run_command_with_env(args: &[&str], env_vars: &[(&str, &str)]) -> (bool, String) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_borg"));
     command.args(args);

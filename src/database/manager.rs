@@ -22,6 +22,7 @@ pub enum DatabaseType {
 /// Database Manager coordinates access to all database collections
 pub struct DatabaseManager {
     /// Base directory for all database files (used for file-based storage)
+    #[allow(dead_code)]
     data_dir: PathBuf,
 
     /// Database for strategic objectives

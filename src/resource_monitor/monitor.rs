@@ -104,6 +104,7 @@ impl SystemResourceMonitor {
     }
 
     /// Refresh system information
+    #[allow(dead_code)]
     fn refresh(&mut self) {
         self.system.refresh_all();
     }

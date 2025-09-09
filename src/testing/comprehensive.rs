@@ -252,11 +252,7 @@ impl ComprehensiveTestRunner {
 
             if line.starts_with("test result:") {
                 // Parse the line like "test result: ok. 42 passed; 0 failed;"
-                if let Some(passed_str) = line
-                    .split_whitespace()
-                    .skip_while(|&s| !s.ends_with("passed;"))
-                    .next()
-                {
+                if let Some(passed_str) = line.split_whitespace().find(|s| s.ends_with("passed;")) {
                     if let Ok(passed) = passed_str
                         .trim_end_matches("passed;")
                         .trim()
@@ -266,11 +262,7 @@ impl ComprehensiveTestRunner {
                     }
                 }
 
-                if let Some(failed_str) = line
-                    .split_whitespace()
-                    .skip_while(|&s| !s.ends_with("failed;"))
-                    .next()
-                {
+                if let Some(failed_str) = line.split_whitespace().find(|s| s.ends_with("failed;")) {
                     if let Ok(failed) = failed_str
                         .trim_end_matches("failed;")
                         .trim()
