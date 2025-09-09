@@ -279,12 +279,11 @@ impl LlmProvider for OpenAiProvider {
 
             // OpenAI streams data as "data: {...}\n\n" for each chunk
             for line in chunk_str.lines() {
-                if line.starts_with("data: ") {
+                if let Some(json_str) = line.strip_prefix("data: ") {
                     if line == "data: [DONE]" {
                         continue;
                     }
 
-                    let json_str = &line["data: ".len()..];
                     match serde_json::from_str::<serde_json::Value>(json_str) {
                         Ok(json) => {
                             if let Some(delta) = json
@@ -509,8 +508,7 @@ impl LlmProvider for AnthropicProvider {
 
             // Anthropic streams data as "event: content_block_start\ndata: {...}\n\n" etc.
             for line in chunk_str.lines() {
-                if line.starts_with("data: ") {
-                    let json_str = &line["data: ".len()..];
+                if let Some(json_str) = line.strip_prefix("data: ") {
                     match serde_json::from_str::<serde_json::Value>(json_str) {
                         Ok(json) => {
                             if let Some(delta) = json

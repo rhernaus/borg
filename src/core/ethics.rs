@@ -223,6 +223,12 @@ pub struct EthicsManager {
     impact_assessment_history: Vec<EthicalImpactAssessment>,
 }
 
+impl Default for EthicsManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EthicsManager {
     /// Create a new ethics manager with default values
     pub fn new() -> Self {

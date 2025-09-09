@@ -98,6 +98,12 @@ pub struct TestResultAnalyzer {
     test_failure_regex: Regex,
 }
 
+impl Default for TestResultAnalyzer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TestResultAnalyzer {
     /// Create a new test result analyzer
     pub fn new() -> Self {

@@ -356,10 +356,7 @@ impl GitManager for LibGitManager {
         let repo = self.open_repo()?;
 
         // Using a local variable to avoid lifetime issues
-        let exists = match repo.find_branch(branch_name, BranchType::Local) {
-            Ok(_) => true,
-            Err(_) => false,
-        };
+        let exists = repo.find_branch(branch_name, BranchType::Local).is_ok();
 
         Ok(exists)
     }

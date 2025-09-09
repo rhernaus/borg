@@ -935,7 +935,7 @@ early_exit = true
 
     // Run with environment variables to indicate test mode
     let mut command = Command::new(env!("CARGO_BIN_EXE_borg"));
-    command.args(&["-c", config_path.to_str().unwrap()]);
+    command.args(["-c", config_path.to_str().unwrap()]);
     command.env("BORG_TEST_MODE", "true");
     command.env("BORG_DISABLE_LONG_RUNNING", "true");
     command.env("BORG_USE_MOCK_LLM", "true");
@@ -1006,7 +1006,7 @@ test_mode = true
 
     // Run with environment variable that should cause test-mode behavior
     let mut command = Command::new(env!("CARGO_BIN_EXE_borg"));
-    command.args(&["-c", config_path.to_str().unwrap()]);
+    command.args(["-c", config_path.to_str().unwrap()]);
     command.env("BORG_TEST_MODE", "true");
 
     let output = command.output().expect("Failed to execute borg command");
@@ -1074,7 +1074,7 @@ test_mode = true
 
     // Run with environment variables that should prevent forking
     let mut command = Command::new(env!("CARGO_BIN_EXE_borg"));
-    command.args(&["-c", config_path.to_str().unwrap()]);
+    command.args(["-c", config_path.to_str().unwrap()]);
     command.env("BORG_NO_FORK", "true");
     command.env("BORG_TEST_MODE", "true");
     command.env("BORG_DISABLE_LONG_RUNNING", "true");
@@ -1141,7 +1141,7 @@ early_exit = true
 
     // Run with the early-exit config and environment variables to indicate test mode
     let mut command = Command::new(env!("CARGO_BIN_EXE_borg"));
-    command.args(&["-c", config_path.to_str().unwrap()]);
+    command.args(["-c", config_path.to_str().unwrap()]);
     command.env("BORG_TEST_MODE", "true");
     command.env("BORG_DISABLE_LONG_RUNNING", "true");
 

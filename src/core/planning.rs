@@ -192,7 +192,7 @@ impl Milestone {
             milestones
                 .iter()
                 .find(|m| m.id == *dep_id)
-                .map_or(true, |m| m.status != MilestoneStatus::Achieved)
+                .is_none_or(|m| m.status != MilestoneStatus::Achieved)
         })
     }
 
@@ -243,6 +243,12 @@ pub struct StrategicPlan {
 
     /// When the last planning cycle was executed
     pub last_planning_cycle: Option<DateTime<Utc>>,
+}
+
+impl Default for StrategicPlan {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StrategicPlan {
@@ -643,7 +649,7 @@ impl StrategicPlanningManager {
                     }
                 }
 
-                prompt.push_str("\n");
+                prompt.push('\n');
             }
         }
 
@@ -678,7 +684,7 @@ impl StrategicPlanningManager {
                     }
                 }
 
-                prompt.push_str("\n");
+                prompt.push('\n');
             }
         }
 
@@ -841,7 +847,7 @@ impl StrategicPlanningManager {
             }
         }
 
-        prompt.push_str("\n");
+        prompt.push('\n');
 
         // Instructions for the LLM
         prompt.push_str(
@@ -1218,7 +1224,7 @@ impl StrategicPlanningManager {
         // 4. Generate milestones for any objectives without them
         // Clone the objectives first to avoid borrow checker issues
         let objectives_to_process: Vec<StrategicObjective> =
-            self.plan.objectives.iter().cloned().collect();
+            self.plan.objectives.to_vec();
 
         for objective in &objectives_to_process {
             let existing_milestones = self.plan.get_milestones_for_objective(&objective.id);
@@ -1297,7 +1303,7 @@ impl StrategicPlanningManager {
                 // In a real implementation, we would add tactical goals here
             }
 
-            output.push_str("\n");
+            output.push('\n');
         }
 
         Ok(output)
@@ -1392,7 +1398,7 @@ impl StrategicPlanningManager {
                 output.push_str(&format!("  - {} ({}%)\n", kr, progress));
             }
 
-            output.push_str("\n");
+            output.push('\n');
         }
 
         // Recent activity
@@ -1431,7 +1437,7 @@ impl StrategicPlanningManager {
                     milestone.target_date.format("%Y-%m-%d")
                 ));
             }
-            output.push_str("\n");
+            output.push('\n');
         }
 
         Ok(output)

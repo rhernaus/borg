@@ -91,11 +91,11 @@ impl CodeImprovementStrategy {
         // Create the context with the goal description as the task
         let context = CodeContext {
             task: goal.description.clone(),
-            file_paths: file_paths,
+            file_paths,
             requirements: Some(format!(
                 "Category: {}\nPriority: {}",
-                goal.category.to_string(),
-                goal.priority.to_string()
+                goal.category,
+                goal.priority
             )),
             previous_attempts: Vec::new(), // For now, we don't track previous attempts
             file_contents: None,
@@ -745,13 +745,11 @@ impl CodeImprovementStrategy {
                 .hide(main_commit.id())
                 .context("Failed to hide main commit in revwalk")?;
 
-            for oid in revwalk {
-                if let Ok(oid) = oid {
-                    if let Ok(commit) = repo.find_commit(oid) {
-                        let message = commit.message().unwrap_or("No message");
-                        let summary_line = message.lines().next().unwrap_or("No message");
-                        summary.push_str(&format!("- {}\n", summary_line));
-                    }
+            for oid in revwalk.flatten() {
+                if let Ok(commit) = repo.find_commit(oid) {
+                    let message = commit.message().unwrap_or("No message");
+                    let summary_line = message.lines().next().unwrap_or("No message");
+                    summary.push_str(&format!("- {}\n", summary_line));
                 }
             }
 

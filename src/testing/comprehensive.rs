@@ -546,7 +546,7 @@ impl ComprehensiveTestRunner {
         let mut report = String::new();
 
         // Overall summary
-        report.push_str(&format!("# Test Report\n\n"));
+        report.push_str("# Test Report\n\n");
         report.push_str(&format!(
             "**Overall Result:** {}\n",
             if result.success {
@@ -621,7 +621,7 @@ impl ComprehensiveTestRunner {
         if let Some(analysis) = &result.analysis {
             report.push_str("\n## Analysis\n\n");
             report.push_str(&analysis.feedback);
-            report.push_str("\n");
+            report.push('\n');
         }
 
         report

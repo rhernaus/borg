@@ -671,7 +671,7 @@ impl CodeGenerator for LlmCodeGenerator {
 
             // Fetch content of all relevant files
             let current_code = self
-                .fetch_code_content(&context.file_paths.first().unwrap())
+                .fetch_code_content(context.file_paths.first().unwrap())
                 .await?;
 
             // Determine the appropriate prompt type based on the task description

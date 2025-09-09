@@ -213,7 +213,7 @@ fn main() -> Result<()> {
 
                 // Create the git manager and code generator
                 let git_manager: Arc<TokioMutex<dyn GitManager>> = Arc::new(TokioMutex::new(
-                    GitImplementation::new(&PathBuf::from(&config.agent.working_dir))
+                    GitImplementation::new(PathBuf::from(&config.agent.working_dir))
                         .context("Failed to create git manager")?,
                 ));
 

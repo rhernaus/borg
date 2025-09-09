@@ -59,7 +59,7 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> FileDb<T> {
         let data_dir = data_dir.as_ref().to_path_buf();
 
         // Create data directory if it doesn't exist
-        fs::create_dir_all(&data_dir).map_err(|e| DatabaseError::IoError(e))?;
+        fs::create_dir_all(&data_dir).map_err(DatabaseError::IoError)?;
 
         let db = Self {
             data_dir,
@@ -98,13 +98,13 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> FileDb<T> {
         );
 
         // Open and read the file
-        let file = File::open(&path).map_err(|e| DatabaseError::IoError(e))?;
+        let file = File::open(&path).map_err(DatabaseError::IoError)?;
 
         let reader = BufReader::new(file);
 
         // Deserialize records from JSON
         let records: Vec<Record<T>> =
-            serde_json::from_reader(reader).map_err(|e| DatabaseError::SerializationError(e))?;
+            serde_json::from_reader(reader).map_err(DatabaseError::SerializationError)?;
 
         // Update cache with loaded records
         let mut cache = self.cache.write().await;
@@ -136,16 +136,16 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> FileDb<T> {
         let records: Vec<Record<T>> = cache.values().cloned().collect();
 
         // Open a writer to the temporary file
-        let file = File::create(&temp_path).map_err(|e| DatabaseError::IoError(e))?;
+        let file = File::create(&temp_path).map_err(DatabaseError::IoError)?;
 
         let writer = BufWriter::new(file);
 
         // Serialize records to JSON
         serde_json::to_writer_pretty(writer, &records)
-            .map_err(|e| DatabaseError::SerializationError(e))?;
+            .map_err(DatabaseError::SerializationError)?;
 
         // Atomically rename the temporary file to the actual file
-        fs::rename(&temp_path, &path).map_err(|e| DatabaseError::IoError(e))?;
+        fs::rename(&temp_path, &path).map_err(DatabaseError::IoError)?;
 
         info!(
             "Successfully saved {} records to {}",

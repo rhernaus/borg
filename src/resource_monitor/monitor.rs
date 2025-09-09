@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
-use sysinfo::{ProcessExt, System, SystemExt};
+use sysinfo::System;
 
 use crate::core::error::BorgError;
 
@@ -77,6 +77,12 @@ pub struct SystemResourceMonitor {
 
     /// Monitoring interval
     monitoring_interval: Option<Duration>,
+}
+
+impl Default for SystemResourceMonitor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SystemResourceMonitor {

@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 
 /// Categories of optimization goals that the agent can pursue
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Default)]
 pub enum OptimizationCategory {
     /// Improve code performance (speed, memory usage, etc.)
     Performance,
@@ -34,6 +35,7 @@ pub enum OptimizationCategory {
     Financial,
 
     /// General improvements (not fitting other categories)
+    #[default]
     General,
 }
 
@@ -53,11 +55,6 @@ impl fmt::Display for OptimizationCategory {
     }
 }
 
-impl Default for OptimizationCategory {
-    fn default() -> Self {
-        OptimizationCategory::General
-    }
-}
 
 /// Priority level for optimization goals
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -315,7 +312,7 @@ impl OptimizationGoal {
     pub fn is_part_of_objective(&self, objective_id: &str) -> bool {
         self.objective_id
             .as_ref()
-            .map_or(false, |id| id == objective_id)
+            .is_some_and(|id| id == objective_id)
     }
 
     /// Get a summary of the goal
@@ -342,7 +339,7 @@ impl OptimizationGoal {
             for dep in &self.dependencies {
                 details.push_str(&format!("- {}\n", dep));
             }
-            details.push_str("\n");
+            details.push('\n');
         }
 
         if !self.ethical_considerations.is_empty() {
@@ -350,7 +347,7 @@ impl OptimizationGoal {
             for consideration in &self.ethical_considerations {
                 details.push_str(&format!("- {}\n", consideration));
             }
-            details.push_str("\n");
+            details.push('\n');
         }
 
         details
@@ -686,7 +683,7 @@ pub fn get_conflicting_goals(goals: &[OptimizationGoal]) -> HashMap<String, Vec<
         for tag in file_paths {
             file_goals
                 .entry(tag)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(goal.id.clone());
         }
     }

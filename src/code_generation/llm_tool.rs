@@ -879,7 +879,7 @@ impl LlmTool for CompilationFeedbackTool {
                         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
                         if success {
-                            format!("✅ Code compiles successfully without errors!")
+                            "✅ Code compiles successfully without errors!".to_string()
                         } else {
                             format!("❌ Compilation errors found:\n\n{}", stderr)
                         }
@@ -894,7 +894,7 @@ impl LlmTool for CompilationFeedbackTool {
                 let mut cmd = Command::new("cargo");
                 cmd.arg("script");
                 cmd.arg("--");
-                cmd.arg(&format!(
+                cmd.arg(format!(
                     r#"
                     use std::fs;
                     use std::path::Path;
@@ -1308,6 +1308,12 @@ impl LlmTool for GitCommandTool {
 /// Tool registry for managing available tools
 pub struct ToolRegistry {
     tools: HashMap<String, Box<dyn LlmTool>>,
+}
+
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ToolRegistry {

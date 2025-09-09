@@ -372,7 +372,7 @@ impl CoverageReporter {
                                 }
                             }
 
-                            output.push_str("\n");
+                            output.push('\n');
                         }
                     }
                 }

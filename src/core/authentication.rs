@@ -56,6 +56,12 @@ pub struct AuthenticationManager {
     current_user: Option<AuthenticatedUser>,
 }
 
+impl Default for AuthenticationManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AuthenticationManager {
     /// Create a new authentication manager
     pub fn new() -> Self {

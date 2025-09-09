@@ -596,11 +596,11 @@ impl Agent {
         // Create the context with the goal description as the task
         let context = CodeContext {
             task: goal.description.clone(),
-            file_paths: file_paths,
+            file_paths,
             requirements: Some(format!(
                 "Category: {}\nPriority: {}",
-                goal.category.to_string(),
-                goal.priority.to_string()
+                goal.category,
+                goal.priority
             )),
             previous_attempts: Vec::new(), // For now, we don't track previous attempts
             file_contents: None,
@@ -1100,7 +1100,7 @@ impl Agent {
             // Fall back to a basic complexity estimation based on file stats
             let complexity = Agent::fallback_complexity_analysis(metric)?;
             // Extract target from metric name if possible, otherwise use a default threshold of 10.0
-            let target = if let Some(target_str) = metric.split('_').last() {
+            let target = if let Some(target_str) = metric.split('_').next_back() {
                 target_str.parse::<f64>().unwrap_or(10.0)
             } else {
                 10.0 // Default threshold
@@ -1135,7 +1135,7 @@ impl Agent {
                 let numbers: Vec<f64> = line
                     .split_whitespace()
                     .filter_map(|word| {
-                        word.trim_matches(|c: char| !c.is_digit(10) && c != '.')
+                        word.trim_matches(|c: char| !c.is_ascii_digit() && c != '.')
                             .parse::<f64>()
                             .ok()
                     })
@@ -2170,7 +2170,7 @@ impl Agent {
                 Ok(Err(e)) => {
                     warn!("Failed to save strategic plan to MongoDB: {} - falling back to file system", e);
                     // Fall back to file system
-                    let mut planning_manager = self.strategic_planning_manager.lock().await;
+                    let planning_manager = self.strategic_planning_manager.lock().await;
                     if let Err(e) = tokio::time::timeout(
                         std::time::Duration::from_secs(3), // 3 second timeout
                         planning_manager.save_to_disk(),
@@ -2183,7 +2183,7 @@ impl Agent {
                 Err(_) => {
                     warn!("Save to MongoDB timed out - falling back to file system");
                     // Fall back to file system
-                    let mut planning_manager = self.strategic_planning_manager.lock().await;
+                    let planning_manager = self.strategic_planning_manager.lock().await;
                     if let Err(e) = tokio::time::timeout(
                         std::time::Duration::from_secs(3), // 3 second timeout
                         planning_manager.save_to_disk(),
@@ -2196,7 +2196,7 @@ impl Agent {
             }
         } else {
             // If not using MongoDB, save to disk
-            let mut planning_manager = self.strategic_planning_manager.lock().await;
+            let planning_manager = self.strategic_planning_manager.lock().await;
             if let Err(e) = tokio::time::timeout(
                 std::time::Duration::from_secs(3), // 3 second timeout
                 planning_manager.save_to_disk(),
@@ -2230,7 +2230,7 @@ fn extract_numeric_target(metric: &str) -> Result<f64> {
     // Look for patterns like "X > 80%" or "Y < 5"
     for part in metric.split_whitespace() {
         if let Ok(value) = part
-            .trim_end_matches(&['%', ',', '.', ':', ';'])
+            .trim_end_matches(['%', ',', '.', ':', ';'])
             .parse::<f64>()
         {
             return Ok(value);

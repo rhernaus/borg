@@ -148,7 +148,7 @@ impl LlmLogger {
     fn write_to_log(&self, text: &str) -> Result<()> {
         if let Some(file) = &self.log_file {
             let mut file_guard = file.lock().map_err(|_| {
-                io::Error::new(io::ErrorKind::Other, "Failed to acquire lock on log file")
+                io::Error::other("Failed to acquire lock on log file")
             })?;
 
             file_guard
@@ -178,10 +178,10 @@ impl LlmLogger {
             let path = entry.path();
 
             if path.is_file()
-                && path.extension().map_or(false, |ext| ext == "txt")
+                && path.extension().is_some_and(|ext| ext == "txt")
                 && path
                     .file_name()
-                    .map_or(false, |name| name.to_string_lossy().starts_with("llm_log_"))
+                    .is_some_and(|name| name.to_string_lossy().starts_with("llm_log_"))
             {
                 let metadata = fs::metadata(&path)?;
                 log_files.push((path, metadata.modified()?));

@@ -7,6 +7,12 @@ pub struct PromptManager {
     templates: HashMap<String, String>,
 }
 
+impl Default for PromptManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PromptManager {
     /// Create a new prompt manager with default templates
     pub fn new() -> Self {

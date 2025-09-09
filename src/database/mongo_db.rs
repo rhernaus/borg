@@ -69,7 +69,7 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> MongoDb<T> {
     pub async fn get(&self, id: &T::Id) -> DbResult<Record<T>> {
         let filter = doc! { "entity.id": id.as_ref() };
 
-        match self.collection.find_one(filter, None).await {
+        match self.collection.find_one(filter).await {
             Ok(Some(record)) => Ok(record),
             Ok(None) => Err(DatabaseError::NotFound(id.as_ref().to_string())),
             Err(e) => Err(DatabaseError::InternalError(format!(
@@ -83,7 +83,7 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> MongoDb<T> {
     pub async fn get_all(&self) -> DbResult<Vec<Record<T>>> {
         let cursor = self
             .collection
-            .find(None, None)
+            .find(doc! {})
             .await
             .map_err(|e| DatabaseError::InternalError(format!("MongoDB error: {}", e)))?;
 
@@ -103,7 +103,7 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> MongoDb<T> {
         let filter = doc! { "entity.id": id.as_ref() };
         let exists = self
             .collection
-            .find_one(filter.clone(), None)
+            .find_one(filter.clone())
             .await
             .map_err(|e| DatabaseError::InternalError(format!("MongoDB error: {}", e)))?;
 
@@ -116,7 +116,7 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> MongoDb<T> {
 
         // Insert into MongoDB
         self.collection
-            .insert_one(&record, None)
+            .insert_one(&record)
             .await
             .map_err(|e| DatabaseError::InternalError(format!("MongoDB error: {}", e)))?;
 
@@ -133,7 +133,7 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> MongoDb<T> {
         let filter = doc! { "entity.id": id.as_ref() };
         let existing = self
             .collection
-            .find_one(filter.clone(), None)
+            .find_one(filter.clone())
             .await
             .map_err(|e| DatabaseError::InternalError(format!("MongoDB error: {}", e)))?;
 
@@ -160,7 +160,7 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> MongoDb<T> {
         .map_err(|e| DatabaseError::InternalError(format!("MongoDB serialization error: {}", e)))? };
 
         self.collection
-            .update_one(filter, update, None)
+            .update_one(filter, update)
             .await
             .map_err(|e| DatabaseError::InternalError(format!("MongoDB error: {}", e)))?;
 
@@ -175,7 +175,7 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> MongoDb<T> {
 
         let result = self
             .collection
-            .delete_one(filter, None)
+            .delete_one(filter)
             .await
             .map_err(|e| DatabaseError::InternalError(format!("MongoDB error: {}", e)))?;
 
@@ -191,7 +191,7 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> MongoDb<T> {
     /// Clear all records
     pub async fn clear(&self) -> DbResult<()> {
         self.collection
-            .delete_many(doc! {}, None)
+            .delete_many(doc! {})
             .await
             .map_err(|e| DatabaseError::InternalError(format!("MongoDB error: {}", e)))?;
 

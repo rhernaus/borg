@@ -165,7 +165,7 @@ impl TestRunner for SimpleTestRunner {
 
         let output = Command::new("cargo")
             .current_dir(&target_dir)
-            .args(&["bench"])
+            .args(["bench"])
             .output()
             .context("Failed to run benchmarks")?;
 

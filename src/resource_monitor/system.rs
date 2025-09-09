@@ -7,7 +7,7 @@ use std::sync::{
     Arc,
 };
 use std::time::{Duration, Instant};
-use sysinfo::{CpuExt, ProcessExt, System, SystemExt};
+use sysinfo::System;
 use tokio;
 
 use crate::core::error::BorgError;
@@ -220,7 +220,7 @@ impl ResourceMonitor for SystemMonitor {
                 }
 
                 // Get CPU usage using the global CPU info
-                let cpu_usage = system.global_cpu_info().cpu_usage();
+                let cpu_usage = system.global_cpu_usage();
 
                 // Check if we're exceeding limits
                 let memory_exceeded =
