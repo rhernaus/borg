@@ -1,5 +1,5 @@
-use async_trait::async_trait;
 use anyhow::Result;
+use async_trait::async_trait;
 
 /// A trait representing a code generator that can propose code improvements
 #[async_trait]
@@ -22,7 +22,12 @@ pub trait CodeGenerator: Send + Sync {
     ///
     /// # Returns
     /// A result indicating success or failure
-    async fn provide_feedback(&self, improvement: &CodeImprovement, success: bool, feedback: &str) -> Result<()>;
+    async fn provide_feedback(
+        &self,
+        improvement: &CodeImprovement,
+        success: bool,
+        feedback: &str,
+    ) -> Result<()>;
 
     /// Generate a response for git operations
     async fn generate_git_response(&self, query: &str) -> Result<String>;
@@ -36,7 +41,12 @@ pub trait CodeGenerator: Send + Sync {
     ///
     /// # Returns
     /// A result containing the generated commit message or an error
-    async fn generate_commit_message(&self, improvement: &CodeImprovement, goal_id: &str, branch_name: &str) -> Result<String>;
+    async fn generate_commit_message(
+        &self,
+        improvement: &CodeImprovement,
+        goal_id: &str,
+        branch_name: &str,
+    ) -> Result<String>;
 
     /// Handle git merge operations
     ///
@@ -47,7 +57,12 @@ pub trait CodeGenerator: Send + Sync {
     ///
     /// # Returns
     /// A result containing the merge description or an error
-    async fn handle_merge_operation(&self, branch_name: &str, target_branch: &str, summary: &str) -> Result<String>;
+    async fn handle_merge_operation(
+        &self,
+        branch_name: &str,
+        target_branch: &str,
+        summary: &str,
+    ) -> Result<String>;
 }
 
 /// The context for code generation

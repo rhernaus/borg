@@ -7,8 +7,8 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crate::core::error::BorgError;
-use crate::testing::test_runner::{TestRunner, TestResult, TestMetrics};
-use crate::testing::result_analyzer::{TestAnalysis, TestResultAnalyzer, TestError};
+use crate::testing::result_analyzer::{TestAnalysis, TestError, TestResultAnalyzer};
+use crate::testing::test_runner::{TestMetrics, TestResult, TestRunner};
 
 /// The stage of testing being performed
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -104,7 +104,7 @@ impl ComprehensiveTestRunner {
     pub fn new<P: AsRef<Path>>(workspace: P) -> Result<Self> {
         Ok(Self {
             workspace: workspace.as_ref().to_path_buf(),
-            timeout_seconds: 300, // 5 minutes default timeout per stage
+            timeout_seconds: 300,       // 5 minutes default timeout per stage
             continue_on_failure: false, // Default to stopping on first failure
             enabled_stages: vec![
                 TestStage::Formatting,
@@ -139,9 +139,7 @@ impl ComprehensiveTestRunner {
 
     /// Check if a command is available
     fn check_command(command: &str) -> Result<()> {
-        let output = Command::new("which")
-            .arg(command)
-            .output();
+        let output = Command::new("which").arg(command).output();
 
         match output {
             Ok(output) if output.status.success() => Ok(()),
@@ -150,11 +148,13 @@ impl ComprehensiveTestRunner {
                 if command == "rustfmt" || command == "clippy-driver" {
                     warn!("Command '{}' not found, skipping related tests", command);
                     Err(anyhow::anyhow!(BorgError::TestingError(format!(
-                        "'{}' command not found, but it's optional", command
+                        "'{}' command not found, but it's optional",
+                        command
                     ))))
                 } else {
                     Err(anyhow::anyhow!(BorgError::TestingError(format!(
-                        "'{}' command not found", command
+                        "'{}' command not found",
+                        command
                     ))))
                 }
             }
@@ -162,7 +162,12 @@ impl ComprehensiveTestRunner {
     }
 
     /// Run a command with timeout and return the result
-    async fn run_command(&self, cmd: &mut Command, stage: TestStage, branch: &str) -> Result<TestResult> {
+    async fn run_command(
+        &self,
+        cmd: &mut Command,
+        stage: TestStage,
+        branch: &str,
+    ) -> Result<TestResult> {
         let start_time = Instant::now();
 
         info!("Running {:?} on branch {}", stage, branch);
@@ -170,9 +175,10 @@ impl ComprehensiveTestRunner {
         let output = match cmd.output() {
             Ok(output) => output,
             Err(e) => {
-                return Err(anyhow::anyhow!(BorgError::TestingError(
-                    format!("Failed to run command for {}: {}", stage, e)
-                )));
+                return Err(anyhow::anyhow!(BorgError::TestingError(format!(
+                    "Failed to run command for {}: {}",
+                    stage, e
+                ))));
             }
         };
 
@@ -198,9 +204,9 @@ impl ComprehensiveTestRunner {
                     // Sometimes cargo test might return non-zero despite passing tests
                     !combined_output.contains("test result: FAILED")
                 }
-            },
+            }
             // For other stages, just use the command exit status
-            _ => output.status.success()
+            _ => output.status.success(),
         };
 
         if success {
@@ -211,7 +217,10 @@ impl ComprehensiveTestRunner {
         }
 
         // Parse metrics if it's a test run
-        let metrics = if stage == TestStage::UnitTests || stage == TestStage::IntegrationTests || stage == TestStage::DocTests {
+        let metrics = if stage == TestStage::UnitTests
+            || stage == TestStage::IntegrationTests
+            || stage == TestStage::DocTests
+        {
             self.parse_test_output(&combined_output)
         } else {
             None
@@ -243,20 +252,30 @@ impl ComprehensiveTestRunner {
 
             if line.starts_with("test result:") {
                 // Parse the line like "test result: ok. 42 passed; 0 failed;"
-                if let Some(passed_str) = line.split_whitespace()
+                if let Some(passed_str) = line
+                    .split_whitespace()
                     .skip_while(|&s| !s.ends_with("passed;"))
                     .next()
                 {
-                    if let Ok(passed) = passed_str.trim_end_matches("passed;").trim().parse::<usize>() {
+                    if let Ok(passed) = passed_str
+                        .trim_end_matches("passed;")
+                        .trim()
+                        .parse::<usize>()
+                    {
                         tests_passed = passed;
                     }
                 }
 
-                if let Some(failed_str) = line.split_whitespace()
+                if let Some(failed_str) = line
+                    .split_whitespace()
                     .skip_while(|&s| !s.ends_with("failed;"))
                     .next()
                 {
-                    if let Ok(failed) = failed_str.trim_end_matches("failed;").trim().parse::<usize>() {
+                    if let Ok(failed) = failed_str
+                        .trim_end_matches("failed;")
+                        .trim()
+                        .parse::<usize>()
+                    {
                         tests_failed = failed;
                     }
                 }
@@ -291,7 +310,8 @@ impl ComprehensiveTestRunner {
             .arg("--")
             .arg("--check"); // Check only, don't modify files
 
-        self.run_command(&mut cmd, TestStage::Formatting, branch).await
+        self.run_command(&mut cmd, TestStage::Formatting, branch)
+            .await
     }
 
     /// Run code linting with clippy
@@ -313,7 +333,11 @@ impl ComprehensiveTestRunner {
     }
 
     /// Run compilation check
-    async fn run_compilation(&self, branch: &str, target_path: Option<&Path>) -> Result<TestResult> {
+    async fn run_compilation(
+        &self,
+        branch: &str,
+        target_path: Option<&Path>,
+    ) -> Result<TestResult> {
         Self::check_command("cargo")?;
 
         let target_dir = target_path.unwrap_or(&self.workspace);
@@ -324,7 +348,8 @@ impl ComprehensiveTestRunner {
             .arg("--all-targets")
             .arg("--all-features");
 
-        self.run_command(&mut cmd, TestStage::Compilation, branch).await
+        self.run_command(&mut cmd, TestStage::Compilation, branch)
+            .await
     }
 
     /// Run unit tests
@@ -339,11 +364,16 @@ impl ComprehensiveTestRunner {
             .arg("--lib") // Only test library code, not binaries or integration tests
             .arg("--color=always");
 
-        self.run_command(&mut cmd, TestStage::UnitTests, branch).await
+        self.run_command(&mut cmd, TestStage::UnitTests, branch)
+            .await
     }
 
     /// Run integration tests
-    async fn run_integration_tests(&self, branch: &str, target_path: Option<&Path>) -> Result<TestResult> {
+    async fn run_integration_tests(
+        &self,
+        branch: &str,
+        target_path: Option<&Path>,
+    ) -> Result<TestResult> {
         Self::check_command("cargo")?;
 
         let target_dir = target_path.unwrap_or(&self.workspace);
@@ -354,7 +384,8 @@ impl ComprehensiveTestRunner {
             .arg("--test=*") // Only run integration tests
             .arg("--color=always");
 
-        self.run_command(&mut cmd, TestStage::IntegrationTests, branch).await
+        self.run_command(&mut cmd, TestStage::IntegrationTests, branch)
+            .await
     }
 
     /// Run documentation tests
@@ -369,11 +400,16 @@ impl ComprehensiveTestRunner {
             .arg("--doc") // Only run documentation tests
             .arg("--color=always");
 
-        self.run_command(&mut cmd, TestStage::DocTests, branch).await
+        self.run_command(&mut cmd, TestStage::DocTests, branch)
+            .await
     }
 
     /// Run benchmarks
-    async fn run_performance_benchmarks(&self, branch: &str, target_path: Option<&Path>) -> Result<TestResult> {
+    async fn run_performance_benchmarks(
+        &self,
+        branch: &str,
+        target_path: Option<&Path>,
+    ) -> Result<TestResult> {
         Self::check_command("cargo")?;
 
         let target_dir = target_path.unwrap_or(&self.workspace);
@@ -383,11 +419,17 @@ impl ComprehensiveTestRunner {
             .arg("bench")
             .arg("--color=always");
 
-        self.run_command(&mut cmd, TestStage::Benchmarks, branch).await
+        self.run_command(&mut cmd, TestStage::Benchmarks, branch)
+            .await
     }
 
     /// Run a single stage and return the result
-    async fn run_stage(&self, stage: TestStage, branch: &str, target_path: Option<&Path>) -> Result<Option<StageResult>> {
+    async fn run_stage(
+        &self,
+        stage: TestStage,
+        branch: &str,
+        target_path: Option<&Path>,
+    ) -> Result<Option<StageResult>> {
         let stage_result = match stage {
             TestStage::Formatting => self.run_formatting(branch, target_path).await,
             TestStage::Linting => self.run_linting(branch, target_path).await,
@@ -409,10 +451,13 @@ impl ComprehensiveTestRunner {
                     result,
                     errors: result_analysis.errors,
                 }))
-            },
+            }
             Err(e) => {
                 // Check if this is a "not found, but optional" error for formatting/linting tools
-                if let Some(err_msg) = e.to_string().strip_suffix("command not found, but it's optional") {
+                if let Some(err_msg) = e
+                    .to_string()
+                    .strip_suffix("command not found, but it's optional")
+                {
                     info!("Skipping {} stage: {}", stage, err_msg);
                     return Ok(None); // Return None to indicate stage was skipped
                 }
@@ -424,7 +469,11 @@ impl ComprehensiveTestRunner {
     }
 
     /// Run all test stages and return comprehensive results
-    async fn run_all_stages(&self, branch: &str, target_path: Option<&Path>) -> Result<ComprehensiveTestResult> {
+    async fn run_all_stages(
+        &self,
+        branch: &str,
+        target_path: Option<&Path>,
+    ) -> Result<ComprehensiveTestResult> {
         info!("Running comprehensive tests on branch {}", branch);
 
         let start_time = Instant::now();
@@ -444,11 +493,11 @@ impl ComprehensiveTestRunner {
                     if !stage_success && !self.continue_on_failure {
                         break;
                     }
-                },
+                }
                 Ok(None) => {
                     // Stage was skipped (e.g., optional tool not available)
                     continue;
-                },
+                }
                 Err(e) => {
                     error!("Error running test stage {}: {}", stage, e);
                     overall_success = false;
@@ -498,8 +547,18 @@ impl ComprehensiveTestRunner {
 
         // Overall summary
         report.push_str(&format!("# Test Report\n\n"));
-        report.push_str(&format!("**Overall Result:** {}\n", if result.success { "✅ PASSED" } else { "❌ FAILED" }));
-        report.push_str(&format!("**Total Duration:** {:.2}s\n\n", result.total_duration.as_secs_f64()));
+        report.push_str(&format!(
+            "**Overall Result:** {}\n",
+            if result.success {
+                "✅ PASSED"
+            } else {
+                "❌ FAILED"
+            }
+        ));
+        report.push_str(&format!(
+            "**Total Duration:** {:.2}s\n\n",
+            result.total_duration.as_secs_f64()
+        ));
 
         // Detailed stage results
         report.push_str("## Test Stages\n\n");
@@ -508,14 +567,21 @@ impl ComprehensiveTestRunner {
 
         for stage_result in &result.stage_results {
             let metrics_str = match &stage_result.result.metrics {
-                Some(m) => format!("{} run, {} passed, {} failed", m.tests_run, m.tests_passed, m.tests_failed),
+                Some(m) => format!(
+                    "{} run, {} passed, {} failed",
+                    m.tests_run, m.tests_passed, m.tests_failed
+                ),
                 None => "N/A".to_string(),
             };
 
             report.push_str(&format!(
                 "| {} | {} | {:.2}s | {} |\n",
                 stage_result.stage,
-                if stage_result.success { "✅ PASS" } else { "❌ FAIL" },
+                if stage_result.success {
+                    "✅ PASS"
+                } else {
+                    "❌ FAIL"
+                },
                 stage_result.result.duration.as_secs_f64(),
                 metrics_str
             ));
@@ -579,8 +645,10 @@ impl TestRunner for ComprehensiveTestRunner {
         combined_output.push_str("\n\n## Detailed Stage Outputs\n\n");
 
         for stage_result in &comprehensive_result.stage_results {
-            combined_output.push_str(&format!("### {} Output\n```\n{}\n```\n\n",
-                stage_result.stage, stage_result.result.output));
+            combined_output.push_str(&format!(
+                "### {} Output\n```\n{}\n```\n\n",
+                stage_result.stage, stage_result.result.output
+            ));
         }
 
         // Create a simplified TestResult
@@ -588,7 +656,9 @@ impl TestRunner for ComprehensiveTestRunner {
             success: comprehensive_result.success,
             output: combined_output,
             duration: comprehensive_result.total_duration,
-            metrics: comprehensive_result.stage_results.iter()
+            metrics: comprehensive_result
+                .stage_results
+                .iter()
                 .find(|r| r.stage == TestStage::UnitTests)
                 .and_then(|r| r.result.metrics.clone()),
             report: None,

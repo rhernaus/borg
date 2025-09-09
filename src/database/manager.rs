@@ -5,10 +5,10 @@ use anyhow::{Context, Result};
 use log::info;
 use serde::Deserialize;
 
-use crate::core::planning::{Milestone, StrategicObjective, StrategicPlan};
-use crate::core::optimization::OptimizationGoal;
 use crate::core::config::Config;
-use crate::database::{FileDb, MongoDb, DbResult, Entity, StrategicPlanEntity, Record};
+use crate::core::optimization::OptimizationGoal;
+use crate::core::planning::{Milestone, StrategicObjective, StrategicPlan};
+use crate::database::{DbResult, Entity, FileDb, MongoDb, Record, StrategicPlanEntity};
 
 /// Database type enum to distinguish between file-based and MongoDB storage
 #[derive(Debug, Clone, Copy)]
@@ -134,19 +134,26 @@ impl DatabaseManager {
 
         match db_type {
             DatabaseType::File => {
-                info!("Initializing file-based database manager with data directory: {:?}", data_dir);
+                info!(
+                    "Initializing file-based database manager with data directory: {:?}",
+                    data_dir
+                );
 
                 // Create databases for each collection
-                let objectives_db = FileDb::new(&data_dir, "strategic_objectives").await
+                let objectives_db = FileDb::new(&data_dir, "strategic_objectives")
+                    .await
                     .context("Failed to create strategic objectives database")?;
 
-                let milestones_db = FileDb::new(&data_dir, "milestones").await
+                let milestones_db = FileDb::new(&data_dir, "milestones")
+                    .await
                     .context("Failed to create milestones database")?;
 
-                let goals_db = FileDb::new(&data_dir, "optimization_goals").await
+                let goals_db = FileDb::new(&data_dir, "optimization_goals")
+                    .await
                     .context("Failed to create optimization goals database")?;
 
-                let plans_db = FileDb::new(&data_dir, "strategic_plans").await
+                let plans_db = FileDb::new(&data_dir, "strategic_plans")
+                    .await
                     .context("Failed to create strategic plans database")?;
 
                 Ok(Self {
@@ -157,35 +164,45 @@ impl DatabaseManager {
                     plans_db: Arc::new(plans_db),
                     db_type,
                 })
-            },
+            }
             DatabaseType::Mongo => {
-                info!("Initializing MongoDB database manager with connection: {}",
-                    config.mongodb.connection_string);
+                info!(
+                    "Initializing MongoDB database manager with connection: {}",
+                    config.mongodb.connection_string
+                );
 
                 // Create MongoDB databases for each collection
                 let objectives_db = MongoDb::new(
                     &config.mongodb.connection_string,
                     &config.mongodb.database,
-                    "strategic_objectives"
-                ).await.context("Failed to create strategic objectives MongoDB database")?;
+                    "strategic_objectives",
+                )
+                .await
+                .context("Failed to create strategic objectives MongoDB database")?;
 
                 let milestones_db = MongoDb::new(
                     &config.mongodb.connection_string,
                     &config.mongodb.database,
-                    "milestones"
-                ).await.context("Failed to create milestones MongoDB database")?;
+                    "milestones",
+                )
+                .await
+                .context("Failed to create milestones MongoDB database")?;
 
                 let goals_db = MongoDb::new(
                     &config.mongodb.connection_string,
                     &config.mongodb.database,
-                    "optimization_goals"
-                ).await.context("Failed to create optimization goals MongoDB database")?;
+                    "optimization_goals",
+                )
+                .await
+                .context("Failed to create optimization goals MongoDB database")?;
 
                 let plans_db = MongoDb::new(
                     &config.mongodb.connection_string,
                     &config.mongodb.database,
-                    "strategic_plans"
-                ).await.context("Failed to create strategic plans MongoDB database")?;
+                    "strategic_plans",
+                )
+                .await
+                .context("Failed to create strategic plans MongoDB database")?;
 
                 Ok(Self {
                     data_dir,
@@ -237,7 +254,9 @@ impl DatabaseManager {
         match self.plans_db.get(&"current".to_string()).await {
             Ok(record) => {
                 // Update existing record
-                self.plans_db.update(plan_entity, Some(record.version)).await?;
+                self.plans_db
+                    .update(plan_entity, Some(record.version))
+                    .await?;
             }
             Err(crate::database::DatabaseError::NotFound(_)) => {
                 // Insert new record
@@ -255,11 +274,15 @@ impl DatabaseManager {
         for objective in &plan.objectives {
             match self.objectives_db.get(&objective.id()).await {
                 Ok(record) => {
-                    self.objectives_db.update(objective.clone(), Some(record.version)).await
+                    self.objectives_db
+                        .update(objective.clone(), Some(record.version))
+                        .await
                         .context("Failed to update strategic objective")?;
                 }
                 Err(crate::database::DatabaseError::NotFound(_)) => {
-                    self.objectives_db.insert(objective.clone()).await
+                    self.objectives_db
+                        .insert(objective.clone())
+                        .await
                         .context("Failed to insert strategic objective")?;
                 }
                 Err(e) => return Err(e.into()),
@@ -270,11 +293,15 @@ impl DatabaseManager {
         for milestone in &plan.milestones {
             match self.milestones_db.get(&milestone.id()).await {
                 Ok(record) => {
-                    self.milestones_db.update(milestone.clone(), Some(record.version)).await
+                    self.milestones_db
+                        .update(milestone.clone(), Some(record.version))
+                        .await
                         .context("Failed to update milestone")?;
                 }
                 Err(crate::database::DatabaseError::NotFound(_)) => {
-                    self.milestones_db.insert(milestone.clone()).await
+                    self.milestones_db
+                        .insert(milestone.clone())
+                        .await
                         .context("Failed to insert milestone")?;
                 }
                 Err(e) => return Err(e.into()),
@@ -282,7 +309,8 @@ impl DatabaseManager {
         }
 
         // Finally save the plan itself
-        self.save_plan(plan.clone()).await
+        self.save_plan(plan.clone())
+            .await
             .context("Failed to save strategic plan")?;
 
         Ok(())

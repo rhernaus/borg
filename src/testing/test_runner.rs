@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use log::{info, error, debug};
-use serde::{Serialize, Deserialize};
+use log::{debug, error, info};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -214,7 +214,10 @@ impl CargoTestRunner {
         let mut tests_failed = 0;
 
         // Look for lines like "test result: ok. 42 passed; 0 failed;"
-        if let Some(result_line) = output.lines().find(|line| line.trim().starts_with("test result:")) {
+        if let Some(result_line) = output
+            .lines()
+            .find(|line| line.trim().starts_with("test result:"))
+        {
             if let Some(passed_part) = result_line.split(';').next() {
                 if let Some(passed_str) = passed_part.split_whitespace().nth(3) {
                     if let Ok(passed) = passed_str.parse::<usize>() {
@@ -265,8 +268,9 @@ impl TestRunner for CargoTestRunner {
                 .current_dir(target_dir)
                 .arg("test")
                 .arg("--color=always")
-                .output()
-        ).await;
+                .output(),
+        )
+        .await;
 
         let duration = start_time.elapsed();
 
@@ -298,13 +302,15 @@ impl TestRunner for CargoTestRunner {
                     branch: Some(branch.to_string()),
                     test_stage: None,
                 })
-            },
-            Ok(Err(e)) => Err(anyhow::anyhow!(BorgError::TestingError(
-                format!("Failed to run cargo test: {}", e)
-            ))),
-            Err(_) => Err(anyhow::anyhow!(BorgError::TimeoutError(
-                format!("Test execution timed out after {} seconds", self.timeout_seconds)
-            ))),
+            }
+            Ok(Err(e)) => Err(anyhow::anyhow!(BorgError::TestingError(format!(
+                "Failed to run cargo test: {}",
+                e
+            )))),
+            Err(_) => Err(anyhow::anyhow!(BorgError::TimeoutError(format!(
+                "Test execution timed out after {} seconds",
+                self.timeout_seconds
+            )))),
         }
     }
 
@@ -324,8 +330,9 @@ impl TestRunner for CargoTestRunner {
             TokioCommand::new("cargo")
                 .current_dir(target_dir)
                 .arg("bench")
-                .output()
-        ).await;
+                .output(),
+        )
+        .await;
 
         let duration = start_time.elapsed();
 
@@ -338,7 +345,10 @@ impl TestRunner for CargoTestRunner {
                 let success = output.status.success();
 
                 if success {
-                    info!("Benchmarks completed on branch '{}' in {:?}", branch, duration);
+                    info!(
+                        "Benchmarks completed on branch '{}' in {:?}",
+                        branch, duration
+                    );
                 } else {
                     error!("Benchmarks failed on branch '{}' in {:?}", branch, duration);
                     debug!("Benchmark output: {}", combined_output);
@@ -356,13 +366,15 @@ impl TestRunner for CargoTestRunner {
                     branch: Some(branch.to_string()),
                     test_stage: None,
                 })
-            },
-            Ok(Err(e)) => Err(anyhow::anyhow!(BorgError::TestingError(
-                format!("Failed to run cargo bench: {}", e)
-            ))),
-            Err(_) => Err(anyhow::anyhow!(BorgError::TimeoutError(
-                format!("Benchmark execution timed out after {} seconds", self.timeout_seconds)
-            ))),
+            }
+            Ok(Err(e)) => Err(anyhow::anyhow!(BorgError::TestingError(format!(
+                "Failed to run cargo bench: {}",
+                e
+            )))),
+            Err(_) => Err(anyhow::anyhow!(BorgError::TimeoutError(format!(
+                "Benchmark execution timed out after {} seconds",
+                self.timeout_seconds
+            )))),
         }
     }
 }

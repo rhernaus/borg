@@ -40,7 +40,11 @@ impl PersistenceManager {
     /// Save optimization goals to disk
     pub fn save_goals(&self, goals: &[OptimizationGoal]) -> Result<()> {
         let file_path = self.goals_file_path();
-        info!("Saving {} optimization goals to {:?}", goals.len(), file_path);
+        info!(
+            "Saving {} optimization goals to {:?}",
+            goals.len(),
+            file_path
+        );
 
         // Ensure the data directory exists before writing
         fs::create_dir_all(&self.data_dir)
@@ -77,7 +81,10 @@ impl PersistenceManager {
 
         // If the file doesn't exist, return an empty vector
         if !file_path.exists() {
-            info!("No goals file found at {:?}, starting with empty goals", file_path);
+            info!(
+                "No goals file found at {:?}, starting with empty goals",
+                file_path
+            );
             return Ok(Vec::new());
         }
 
@@ -92,7 +99,10 @@ impl PersistenceManager {
         let goals: Vec<OptimizationGoal> = serde_json::from_reader(reader)
             .with_context(|| "Failed to deserialize goals from JSON")?;
 
-        info!("Successfully loaded {} optimization goals from disk", goals.len());
+        info!(
+            "Successfully loaded {} optimization goals from disk",
+            goals.len()
+        );
         Ok(goals)
     }
 
@@ -107,14 +117,20 @@ impl PersistenceManager {
     }
 
     /// Save the current state of the optimization manager
-    pub async fn save_optimization_manager(&self, optimization_manager: &Arc<Mutex<OptimizationManager>>) -> Result<()> {
+    pub async fn save_optimization_manager(
+        &self,
+        optimization_manager: &Arc<Mutex<OptimizationManager>>,
+    ) -> Result<()> {
         let manager = optimization_manager.lock().await;
         let goals = manager.get_all_goals().to_vec();
         self.save_goals(&goals)
     }
 
     /// Load goals into the optimization manager
-    pub async fn load_into_optimization_manager(&self, optimization_manager: &Arc<Mutex<OptimizationManager>>) -> Result<()> {
+    pub async fn load_into_optimization_manager(
+        &self,
+        optimization_manager: &Arc<Mutex<OptimizationManager>>,
+    ) -> Result<()> {
         let goals = self.load_goals()?;
 
         if !goals.is_empty() {
@@ -138,7 +154,7 @@ impl PersistenceManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::optimization::{OptimizationGoal, OptimizationCategory, PriorityLevel};
+    use crate::core::optimization::{OptimizationCategory, OptimizationGoal, PriorityLevel};
     use tempfile::tempdir;
 
     #[test]
@@ -150,21 +166,15 @@ mod tests {
         // Create some test goals
         let goals = vec![
             {
-                let mut goal = OptimizationGoal::new(
-                    "test-001",
-                    "Test Goal 1",
-                    "This is a test goal",
-                );
+                let mut goal =
+                    OptimizationGoal::new("test-001", "Test Goal 1", "This is a test goal");
                 goal.category = OptimizationCategory::General;
                 goal.priority = PriorityLevel::High.into();
                 goal
             },
             {
-                let mut goal = OptimizationGoal::new(
-                    "test-002",
-                    "Test Goal 2",
-                    "This is another test goal",
-                );
+                let mut goal =
+                    OptimizationGoal::new("test-002", "Test Goal 2", "This is another test goal");
                 goal.category = OptimizationCategory::Performance;
                 goal.priority = PriorityLevel::Medium.into();
                 goal

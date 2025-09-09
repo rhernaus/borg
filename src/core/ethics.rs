@@ -1,6 +1,6 @@
+use log::info;
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use log::info;
 
 /// Fundamental principles that guide the AI's behavior and decision-making
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -30,20 +30,23 @@ pub enum FundamentalPrinciple {
 impl fmt::Display for FundamentalPrinciple {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            FundamentalPrinciple::HumanDignityAndAutonomy =>
-                write!(f, "Human Dignity and Individual Autonomy"),
-            FundamentalPrinciple::EqualityAndNonDiscrimination =>
-                write!(f, "Equality and Non-Discrimination"),
-            FundamentalPrinciple::PrivacyAndDataProtection =>
-                write!(f, "Respect for Privacy and Personal Data Protection"),
-            FundamentalPrinciple::TransparencyAndOversight =>
-                write!(f, "Transparency and Oversight"),
-            FundamentalPrinciple::AccountabilityAndResponsibility =>
-                write!(f, "Accountability and Responsibility"),
-            FundamentalPrinciple::Reliability =>
-                write!(f, "Reliability"),
-            FundamentalPrinciple::SafeInnovation =>
-                write!(f, "Safe Innovation"),
+            FundamentalPrinciple::HumanDignityAndAutonomy => {
+                write!(f, "Human Dignity and Individual Autonomy")
+            }
+            FundamentalPrinciple::EqualityAndNonDiscrimination => {
+                write!(f, "Equality and Non-Discrimination")
+            }
+            FundamentalPrinciple::PrivacyAndDataProtection => {
+                write!(f, "Respect for Privacy and Personal Data Protection")
+            }
+            FundamentalPrinciple::TransparencyAndOversight => {
+                write!(f, "Transparency and Oversight")
+            }
+            FundamentalPrinciple::AccountabilityAndResponsibility => {
+                write!(f, "Accountability and Responsibility")
+            }
+            FundamentalPrinciple::Reliability => write!(f, "Reliability"),
+            FundamentalPrinciple::SafeInnovation => write!(f, "Safe Innovation"),
         }
     }
 }
@@ -70,16 +73,19 @@ pub enum AIObligationKind {
 impl fmt::Display for AIObligationKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AIObligationKind::DocumentationAndInformation =>
-                write!(f, "Documentation and Information Provision"),
-            AIObligationKind::RightToChallengeDecisions =>
-                write!(f, "Right to Challenge Decisions"),
-            AIObligationKind::ComplaintMechanisms =>
-                write!(f, "Complaint Mechanisms"),
-            AIObligationKind::ProceduralGuarantees =>
-                write!(f, "Procedural Guarantees and Safeguards"),
-            AIObligationKind::NotificationOfAIInteraction =>
-                write!(f, "Notification of AI Interaction"),
+            AIObligationKind::DocumentationAndInformation => {
+                write!(f, "Documentation and Information Provision")
+            }
+            AIObligationKind::RightToChallengeDecisions => {
+                write!(f, "Right to Challenge Decisions")
+            }
+            AIObligationKind::ComplaintMechanisms => write!(f, "Complaint Mechanisms"),
+            AIObligationKind::ProceduralGuarantees => {
+                write!(f, "Procedural Guarantees and Safeguards")
+            }
+            AIObligationKind::NotificationOfAIInteraction => {
+                write!(f, "Notification of AI Interaction")
+            }
         }
     }
 }
@@ -116,12 +122,13 @@ pub enum RiskRequirementKind {
 impl fmt::Display for RiskRequirementKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RiskRequirementKind::RiskAndImpactAssessments =>
-                write!(f, "Risk and Impact Assessments"),
-            RiskRequirementKind::PreventionAndMitigationMeasures =>
-                write!(f, "Prevention and Mitigation Measures"),
-            RiskRequirementKind::RegulatoryActions =>
-                write!(f, "Regulatory Actions"),
+            RiskRequirementKind::RiskAndImpactAssessments => {
+                write!(f, "Risk and Impact Assessments")
+            }
+            RiskRequirementKind::PreventionAndMitigationMeasures => {
+                write!(f, "Prevention and Mitigation Measures")
+            }
+            RiskRequirementKind::RegulatoryActions => write!(f, "Regulatory Actions"),
         }
     }
 }
@@ -233,31 +240,36 @@ impl EthicsManager {
             AIObligationStatus {
                 kind: AIObligationKind::DocumentationAndInformation,
                 is_fulfilled: true,
-                implementation_description: "All code changes are documented with comments and commit messages".to_string(),
+                implementation_description:
+                    "All code changes are documented with comments and commit messages".to_string(),
                 outstanding_issues: vec![],
             },
             AIObligationStatus {
                 kind: AIObligationKind::RightToChallengeDecisions,
                 is_fulfilled: true,
-                implementation_description: "All decision-making processes are logged and can be reviewed".to_string(),
+                implementation_description:
+                    "All decision-making processes are logged and can be reviewed".to_string(),
                 outstanding_issues: vec![],
             },
             AIObligationStatus {
                 kind: AIObligationKind::ComplaintMechanisms,
                 is_fulfilled: true,
-                implementation_description: "Issues can be reported through the Git repository".to_string(),
+                implementation_description: "Issues can be reported through the Git repository"
+                    .to_string(),
                 outstanding_issues: vec![],
             },
             AIObligationStatus {
                 kind: AIObligationKind::ProceduralGuarantees,
                 is_fulfilled: true,
-                implementation_description: "Multiple verification steps are built into the system".to_string(),
+                implementation_description: "Multiple verification steps are built into the system"
+                    .to_string(),
                 outstanding_issues: vec![],
             },
             AIObligationStatus {
                 kind: AIObligationKind::NotificationOfAIInteraction,
                 is_fulfilled: true,
-                implementation_description: "All communications clearly identify the agent as an AI".to_string(),
+                implementation_description:
+                    "All communications clearly identify the agent as an AI".to_string(),
                 outstanding_issues: vec![],
             },
         ];
@@ -266,19 +278,22 @@ impl EthicsManager {
             RiskRequirementStatus {
                 kind: RiskRequirementKind::RiskAndImpactAssessments,
                 is_fulfilled: true,
-                implementation_description: "Regular impact assessments are conducted for all code changes".to_string(),
+                implementation_description:
+                    "Regular impact assessments are conducted for all code changes".to_string(),
                 outstanding_issues: vec![],
             },
             RiskRequirementStatus {
                 kind: RiskRequirementKind::PreventionAndMitigationMeasures,
                 is_fulfilled: true,
-                implementation_description: "Measures to mitigate risks are implemented for each change".to_string(),
+                implementation_description:
+                    "Measures to mitigate risks are implemented for each change".to_string(),
                 outstanding_issues: vec![],
             },
             RiskRequirementStatus {
                 kind: RiskRequirementKind::RegulatoryActions,
                 is_fulfilled: true,
-                implementation_description: "The system respects all regulatory constraints".to_string(),
+                implementation_description: "The system respects all regulatory constraints"
+                    .to_string(),
                 outstanding_issues: vec![],
             },
         ];
@@ -292,9 +307,11 @@ impl EthicsManager {
     }
 
     /// Assess the ethical impact of a proposed change
-    pub fn assess_ethical_impact(&mut self,
-                                description: &str,
-                                code_change: &str) -> EthicalImpactAssessment {
+    pub fn assess_ethical_impact(
+        &mut self,
+        description: &str,
+        code_change: &str,
+    ) -> EthicalImpactAssessment {
         // Implement a more sophisticated analysis of the proposed change against ethical principles
         info!("Performing ethical impact assessment");
 
@@ -312,7 +329,7 @@ impl EthicsManager {
             affected_principles.push(FundamentalPrinciple::HumanDignityAndAutonomy);
             principle_impacts.push((
                 FundamentalPrinciple::HumanDignityAndAutonomy,
-                "May affect user autonomy by automating decisions".to_string()
+                "May affect user autonomy by automating decisions".to_string(),
             ));
             mitigations.push("Ensure user confirmation for any automated decisions".to_string());
         }
@@ -322,7 +339,7 @@ impl EthicsManager {
             affected_principles.push(FundamentalPrinciple::PrivacyAndDataProtection);
             principle_impacts.push((
                 FundamentalPrinciple::PrivacyAndDataProtection,
-                "Handles personal data that requires protection".to_string()
+                "Handles personal data that requires protection".to_string(),
             ));
             mitigations.push("Implement data minimization and encryption".to_string());
 
@@ -337,7 +354,7 @@ impl EthicsManager {
             affected_principles.push(FundamentalPrinciple::Reliability);
             principle_impacts.push((
                 FundamentalPrinciple::Reliability,
-                "Modifies critical system components".to_string()
+                "Modifies critical system components".to_string(),
             ));
             mitigations.push("Implement comprehensive testing for reliability".to_string());
         }
@@ -347,7 +364,7 @@ impl EthicsManager {
             affected_principles.push(FundamentalPrinciple::TransparencyAndOversight);
             principle_impacts.push((
                 FundamentalPrinciple::TransparencyAndOversight,
-                "Changes may reduce system transparency".to_string()
+                "Changes may reduce system transparency".to_string(),
             ));
             mitigations.push("Add enhanced logging for change transparency".to_string());
         }
@@ -356,7 +373,7 @@ impl EthicsManager {
         affected_principles.push(FundamentalPrinciple::SafeInnovation);
         principle_impacts.push((
             FundamentalPrinciple::SafeInnovation,
-            "Implements improvements with safety controls".to_string()
+            "Implements improvements with safety controls".to_string(),
         ));
 
         // Check for impacts on obligations
@@ -364,7 +381,7 @@ impl EthicsManager {
             affected_obligations.push(AIObligationKind::DocumentationAndInformation);
             obligation_impacts.push((
                 AIObligationKind::DocumentationAndInformation,
-                "May require documentation updates".to_string()
+                "May require documentation updates".to_string(),
             ));
         }
 
@@ -373,7 +390,7 @@ impl EthicsManager {
             affected_obligations.push(AIObligationKind::NotificationOfAIInteraction);
             obligation_impacts.push((
                 AIObligationKind::NotificationOfAIInteraction,
-                "User-facing changes require notification".to_string()
+                "User-facing changes require notification".to_string(),
             ));
         }
 
@@ -382,7 +399,7 @@ impl EthicsManager {
             &affected_principles,
             &principle_impacts,
             description,
-            code_change
+            code_change,
         );
 
         // Record this assessment in history
@@ -408,9 +425,11 @@ impl EthicsManager {
     }
 
     /// Check if a proposed change violates any ethical principles
-    pub fn check_principle_violations(&self,
-                                     _description: &str,
-                                     _code_change: &str) -> Vec<(FundamentalPrinciple, String)> {
+    pub fn check_principle_violations(
+        &self,
+        _description: &str,
+        _code_change: &str,
+    ) -> Vec<(FundamentalPrinciple, String)> {
         // Placeholder for actual analysis logic
         // In a real implementation, this would analyze the code change against principles
         Vec::new() // No violations detected by default
@@ -427,15 +446,14 @@ impl EthicsManager {
     }
 
     /// Update the status of an obligation
-    pub fn update_obligation_status(&mut self,
-                                   kind: AIObligationKind,
-                                   is_fulfilled: bool,
-                                   implementation: &str,
-                                   issues: &[String]) {
-        if let Some(status) = self.obligation_statuses
-            .iter_mut()
-            .find(|s| s.kind == kind) {
-
+    pub fn update_obligation_status(
+        &mut self,
+        kind: AIObligationKind,
+        is_fulfilled: bool,
+        implementation: &str,
+        issues: &[String],
+    ) {
+        if let Some(status) = self.obligation_statuses.iter_mut().find(|s| s.kind == kind) {
             status.is_fulfilled = is_fulfilled;
             status.implementation_description = implementation.to_string();
             status.outstanding_issues = issues.to_vec();
@@ -443,15 +461,18 @@ impl EthicsManager {
     }
 
     /// Update the status of a risk requirement
-    pub fn update_risk_requirement_status(&mut self,
-                                         kind: RiskRequirementKind,
-                                         is_fulfilled: bool,
-                                         implementation: &str,
-                                         issues: &[String]) {
-        if let Some(status) = self.risk_requirement_statuses
+    pub fn update_risk_requirement_status(
+        &mut self,
+        kind: RiskRequirementKind,
+        is_fulfilled: bool,
+        implementation: &str,
+        issues: &[String],
+    ) {
+        if let Some(status) = self
+            .risk_requirement_statuses
             .iter_mut()
-            .find(|s| s.kind == kind) {
-
+            .find(|s| s.kind == kind)
+        {
             status.is_fulfilled = is_fulfilled;
             status.implementation_description = implementation.to_string();
             status.outstanding_issues = issues.to_vec();
@@ -469,75 +490,138 @@ impl EthicsManager {
 /// Check if the change could impact human autonomy
 fn contains_autonomy_risks(description: &str, code_change: &str) -> bool {
     let autonomy_keywords = [
-        "automat", "decision", "choice", "override", "force", "mandatory",
-        "required", "no option", "no choice", "auto-"
+        "automat",
+        "decision",
+        "choice",
+        "override",
+        "force",
+        "mandatory",
+        "required",
+        "no option",
+        "no choice",
+        "auto-",
     ];
 
-    contains_keywords(description, &autonomy_keywords) ||
-        contains_keywords(code_change, &autonomy_keywords)
+    contains_keywords(description, &autonomy_keywords)
+        || contains_keywords(code_change, &autonomy_keywords)
 }
 
 /// Check if the change could impact privacy
 fn contains_privacy_risks(description: &str, code_change: &str) -> bool {
     let privacy_keywords = [
-        "personal", "data", "user info", "tracking", "monitor", "store",
-        "collect", "privacy", "PII", "information", "profile", "email",
-        "phone", "address", "location", "sensitive"
+        "personal",
+        "data",
+        "user info",
+        "tracking",
+        "monitor",
+        "store",
+        "collect",
+        "privacy",
+        "PII",
+        "information",
+        "profile",
+        "email",
+        "phone",
+        "address",
+        "location",
+        "sensitive",
     ];
 
-    contains_keywords(description, &privacy_keywords) ||
-        contains_keywords(code_change, &privacy_keywords)
+    contains_keywords(description, &privacy_keywords)
+        || contains_keywords(code_change, &privacy_keywords)
 }
 
 /// Check if the change affects system reliability
 fn contains_reliability_impacts(description: &str, code_change: &str) -> bool {
     let reliability_keywords = [
-        "critical", "essential", "core", "stability", "reliable", "uptime",
-        "availability", "performance", "error handling", "failsafe", "recovery",
-        "exception", "crash", "hang", "freeze", "deadlock"
+        "critical",
+        "essential",
+        "core",
+        "stability",
+        "reliable",
+        "uptime",
+        "availability",
+        "performance",
+        "error handling",
+        "failsafe",
+        "recovery",
+        "exception",
+        "crash",
+        "hang",
+        "freeze",
+        "deadlock",
     ];
 
-    contains_keywords(description, &reliability_keywords) ||
-        contains_keywords(code_change, &reliability_keywords)
+    contains_keywords(description, &reliability_keywords)
+        || contains_keywords(code_change, &reliability_keywords)
 }
 
 /// Check if the change reduces system transparency
 fn contains_transparency_risks(description: &str, code_change: &str) -> bool {
     let transparency_keywords = [
-        "hidden", "obscure", "mask", "conceal", "opaque", "unclear",
-        "implicit", "black box", "undocumented", "internal"
+        "hidden",
+        "obscure",
+        "mask",
+        "conceal",
+        "opaque",
+        "unclear",
+        "implicit",
+        "black box",
+        "undocumented",
+        "internal",
     ];
 
-    contains_keywords(description, &transparency_keywords) ||
-        contains_keywords(code_change, &transparency_keywords)
+    contains_keywords(description, &transparency_keywords)
+        || contains_keywords(code_change, &transparency_keywords)
 }
 
 /// Check if the change impacts documentation requirements
 fn contains_documentation_impacts(description: &str, code_change: &str) -> bool {
     let documentation_keywords = [
-        "api", "interface", "public", "export", "doc", "comment",
-        "README", "tutorial", "guide", "manual", "help"
+        "api",
+        "interface",
+        "public",
+        "export",
+        "doc",
+        "comment",
+        "README",
+        "tutorial",
+        "guide",
+        "manual",
+        "help",
     ];
 
-    contains_keywords(description, &documentation_keywords) ||
-        contains_keywords(code_change, &documentation_keywords)
+    contains_keywords(description, &documentation_keywords)
+        || contains_keywords(code_change, &documentation_keywords)
 }
 
 /// Check if the change impacts user-facing components
 fn contains_user_facing_changes(description: &str, code_change: &str) -> bool {
     let ui_keywords = [
-        "ui", "user interface", "frontend", "display", "view", "screen",
-        "page", "button", "input", "form", "notification", "alert", "message"
+        "ui",
+        "user interface",
+        "frontend",
+        "display",
+        "view",
+        "screen",
+        "page",
+        "button",
+        "input",
+        "form",
+        "notification",
+        "alert",
+        "message",
     ];
 
-    contains_keywords(description, &ui_keywords) ||
-        contains_keywords(code_change, &ui_keywords)
+    contains_keywords(description, &ui_keywords) || contains_keywords(code_change, &ui_keywords)
 }
 
 /// Helper to check if text contains any of the given keywords
 fn contains_keywords(text: &str, keywords: &[&str]) -> bool {
     let lower_text = text.to_lowercase();
-    keywords.iter().any(|&keyword| lower_text.contains(&keyword.to_lowercase()))
+    keywords
+        .iter()
+        .any(|&keyword| lower_text.contains(&keyword.to_lowercase()))
 }
 
 /// Assess the overall risk level based on all impacts
@@ -545,7 +629,7 @@ fn assess_overall_risk_level(
     affected_principles: &[FundamentalPrinciple],
     principle_impacts: &[(FundamentalPrinciple, String)],
     description: &str,
-    code_change: &str
+    code_change: &str,
 ) -> RiskLevel {
     // Count the number of affected principles as a simple heuristic
     if affected_principles.len() >= 3 {
@@ -553,10 +637,12 @@ fn assess_overall_risk_level(
     }
 
     // Check for specific high-risk combinations
-    let has_privacy_impact = affected_principles.iter()
+    let has_privacy_impact = affected_principles
+        .iter()
         .any(|p| matches!(p, FundamentalPrinciple::PrivacyAndDataProtection));
 
-    let has_autonomy_impact = affected_principles.iter()
+    let has_autonomy_impact = affected_principles
+        .iter()
         .any(|p| matches!(p, FundamentalPrinciple::HumanDignityAndAutonomy));
 
     if has_privacy_impact && has_autonomy_impact {
@@ -565,11 +651,23 @@ fn assess_overall_risk_level(
 
     // Check for specific high-risk code patterns
     let high_risk_patterns = [
-        "sudo", "exec(", "eval(", "system(", "rm -rf", "DROP TABLE",
-        "DELETE FROM", "password", "token", "key", "credential"
+        "sudo",
+        "exec(",
+        "eval(",
+        "system(",
+        "rm -rf",
+        "DROP TABLE",
+        "DELETE FROM",
+        "password",
+        "token",
+        "key",
+        "credential",
     ];
 
-    if high_risk_patterns.iter().any(|&pattern| code_change.contains(pattern)) {
+    if high_risk_patterns
+        .iter()
+        .any(|&pattern| code_change.contains(pattern))
+    {
         return RiskLevel::High;
     }
 

@@ -1,7 +1,7 @@
+use anyhow::{anyhow, Result};
+use log::info;
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use log::info;
-use anyhow::{Result, anyhow};
 use uuid::Uuid;
 
 /// Represents different access roles in the system
@@ -59,9 +59,7 @@ pub struct AuthenticationManager {
 impl AuthenticationManager {
     /// Create a new authentication manager
     pub fn new() -> Self {
-        Self {
-            current_user: None,
-        }
+        Self { current_user: None }
     }
 
     /// Automatically grant access with the specified role
@@ -99,18 +97,18 @@ impl AuthenticationManager {
                     // Creator can do anything
                     (AccessRole::Creator, _) => true,
                     // Admin can do admin, developer and user tasks
-                    (AccessRole::Administrator, AccessRole::Administrator |
-                                             AccessRole::Developer |
-                                             AccessRole::User) => true,
+                    (
+                        AccessRole::Administrator,
+                        AccessRole::Administrator | AccessRole::Developer | AccessRole::User,
+                    ) => true,
                     // Developer can do developer and user tasks
-                    (AccessRole::Developer, AccessRole::Developer |
-                                         AccessRole::User) => true,
+                    (AccessRole::Developer, AccessRole::Developer | AccessRole::User) => true,
                     // User can only do user tasks
                     (AccessRole::User, AccessRole::User) => true,
                     // Any other combination is not allowed
                     _ => false,
                 }
-            },
+            }
             None => false,
         }
     }
@@ -121,7 +119,7 @@ impl AuthenticationManager {
             Some(user) => {
                 let now = chrono::Utc::now();
                 now < user.expires_at
-            },
+            }
             None => false,
         }
     }
@@ -138,7 +136,8 @@ impl AuthenticationManager {
 // Helper function to extract a value from PEM format
 fn extract_public_key_from_pem(pem: &str) -> Result<Vec<u8>> {
     // Simplistic PEM parsing - proper implementation would use a crypto library
-    let lines: Vec<&str> = pem.lines()
+    let lines: Vec<&str> = pem
+        .lines()
         .filter(|line| !line.starts_with("-----BEGIN") && !line.starts_with("-----END"))
         .collect();
 

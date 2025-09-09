@@ -1,14 +1,14 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use log::{info, warn};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use serde::{Serialize, Deserialize};
 
-use crate::core::optimization::OptimizationGoal;
-use crate::core::ethics::EthicsManager;
 use crate::core::authentication::AuthenticationManager;
+use crate::core::ethics::EthicsManager;
+use crate::core::optimization::OptimizationGoal;
 
 /// Types of actions the agent can take to achieve goals
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -230,9 +230,13 @@ impl StrategyManager {
 
         match best_strategy {
             Some(strategy) if best_score > 0.0 => {
-                info!("Selected strategy '{}' with score {:.2}", strategy.name(), best_score);
+                info!(
+                    "Selected strategy '{}' with score {:.2}",
+                    strategy.name(),
+                    best_score
+                );
                 Ok(strategy)
-            },
+            }
             _ => {
                 warn!("No suitable strategy found for goal: {}", goal.id);
                 Err(anyhow::anyhow!("No suitable strategy found for goal"))
@@ -246,7 +250,10 @@ impl StrategyManager {
 
         // Check permissions
         if !strategy.check_permissions(goal)? {
-            return Err(anyhow::anyhow!("Insufficient permissions for strategy: {}", strategy.name()));
+            return Err(anyhow::anyhow!(
+                "Insufficient permissions for strategy: {}",
+                strategy.name()
+            ));
         }
 
         // Create the plan
@@ -263,7 +270,9 @@ impl StrategyManager {
         info!("Executing plan: {}", plan.id);
 
         // Find the strategy for this plan
-        let strategy = self.strategies.iter()
+        let strategy = self
+            .strategies
+            .iter()
             .find(|s| s.name() == plan.strategy_name)
             .ok_or_else(|| anyhow::anyhow!("Strategy not found: {}", plan.strategy_name))?;
 
@@ -276,7 +285,9 @@ impl StrategyManager {
         info!("Executing step {} of plan {}", step_id, plan.id);
 
         // Find the strategy for this plan
-        let strategy = self.strategies.iter()
+        let strategy = self
+            .strategies
+            .iter()
             .find(|s| s.name() == plan.strategy_name)
             .ok_or_else(|| anyhow::anyhow!("Strategy not found: {}", plan.strategy_name))?;
 
@@ -298,14 +309,14 @@ impl StrategyManager {
         let code_representation = self.build_plan_code_representation(plan)?;
 
         // Perform the ethical assessment
-        let assessment = ethics_manager.assess_ethical_impact(
-            &plan_description,
-            &code_representation
-        );
+        let assessment =
+            ethics_manager.assess_ethical_impact(&plan_description, &code_representation);
 
         // Log the assessment results
-        info!("Ethical assessment for plan {} completed with risk level: {:?}",
-            plan.id, assessment.risk_level);
+        info!(
+            "Ethical assessment for plan {} completed with risk level: {:?}",
+            plan.id, assessment.risk_level
+        );
 
         if !assessment.is_approved {
             warn!("Ethical assessment rejected plan: {}", plan.id);
@@ -322,8 +333,10 @@ impl StrategyManager {
         // If we have high risk but still approved, log warnings
         use crate::core::ethics::RiskLevel;
         if matches!(assessment.risk_level, RiskLevel::Medium | RiskLevel::High) {
-            warn!("Plan {} approved despite risk level: {:?}",
-                plan.id, assessment.risk_level);
+            warn!(
+                "Plan {} approved despite risk level: {:?}",
+                plan.id, assessment.risk_level
+            );
             warn!("Justification: {}", assessment.approval_justification);
 
             // Log the mitigations
@@ -352,8 +365,10 @@ impl StrategyManager {
         let strategy = &plan.strategy_name;
 
         // Build a complete description
-        let mut description = format!("Plan to {} using {} strategy.\n",
-            goal_description, strategy);
+        let mut description = format!(
+            "Plan to {} using {} strategy.\n",
+            goal_description, strategy
+        );
 
         // Add description of each step
         description.push_str("Steps:\n");
@@ -391,7 +406,8 @@ impl StrategyManager {
 
                     // Add any code parameter
                     if let Some(code) = step.parameters.get("code") {
-                        code_representation.push_str(&format!("// Sample: {}\n",
+                        code_representation.push_str(&format!(
+                            "// Sample: {}\n",
                             if code.len() > 100 {
                                 &code[0..100]
                             } else {

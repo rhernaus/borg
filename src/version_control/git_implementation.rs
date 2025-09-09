@@ -1,7 +1,7 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use git2::{Repository, BranchType, Signature, ObjectType};
-use log::{info, error};
+use git2::{BranchType, ObjectType, Repository, Signature};
+use log::{error, info};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -86,7 +86,8 @@ impl GitManager for GitImplementation {
         let repo = self.open_repo()?;
 
         // Find branch
-        let branch = repo.find_branch(branch_name, BranchType::Local)
+        let branch = repo
+            .find_branch(branch_name, BranchType::Local)
             .with_context(|| format!("Failed to find branch: {}", branch_name))?;
 
         // Get branch reference
@@ -118,7 +119,8 @@ impl GitManager for GitImplementation {
                 path
             };
 
-            index.add_path(rel_path)
+            index
+                .add_path(rel_path)
                 .with_context(|| format!("Failed to add file to index: {:?}", rel_path))?;
         }
 
@@ -180,7 +182,10 @@ impl GitManager for GitImplementation {
         let ancestor = repo.find_commit(merge_base)?;
 
         // Improved merge handling for both fast-forward and non-fast-forward merges
-        info!("Attempting to merge branch '{}' into current branch", branch_name);
+        info!(
+            "Attempting to merge branch '{}' into current branch",
+            branch_name
+        );
 
         // Check if this is a fast-forward merge
         let is_ff = repo.graph_descendant_of(head_commit.id(), branch_commit.id())?;
@@ -198,8 +203,12 @@ impl GitManager for GitImplementation {
 
             // Move the branch reference to the new commit
             let refname = format!("refs/heads/{}", head_name);
-            repo.reference(&refname, branch_commit.id(), true,
-                &format!("Fast-forward merge of branch '{}'", branch_name))?;
+            repo.reference(
+                &refname,
+                branch_commit.id(),
+                true,
+                &format!("Fast-forward merge of branch '{}'", branch_name),
+            )?;
 
             // Update the HEAD reference
             repo.set_head(&refname)?;
@@ -219,7 +228,7 @@ impl GitManager for GitImplementation {
             // Perform the merge analysis
             // First annotate the branch commit to create an annotated commit
             let annotated_commit = repo.reference_to_annotated_commit(
-                &repo.find_reference(&format!("refs/heads/{}", branch_name))?
+                &repo.find_reference(&format!("refs/heads/{}", branch_name))?,
             )?;
 
             let analysis = repo.merge_analysis(&[&annotated_commit])?;
@@ -242,8 +251,12 @@ impl GitManager for GitImplementation {
 
                 // Move the branch reference to the new commit
                 let refname = format!("refs/heads/{}", head_name);
-                repo.reference(&refname, branch_commit.id(), true,
-                    &format!("Fast-forward merge of branch '{}'", branch_name))?;
+                repo.reference(
+                    &refname,
+                    branch_commit.id(),
+                    true,
+                    &format!("Fast-forward merge of branch '{}'", branch_name),
+                )?;
 
                 // Update the HEAD reference
                 repo.set_head(&refname)?;
@@ -265,7 +278,9 @@ impl GitManager for GitImplementation {
                     // but for now we'll abort the merge if there are conflicts
                     error!("Merge conflicts detected, aborting merge");
                     repo.cleanup_state()?;
-                    return Err(anyhow!("Merge conflicts detected, manual resolution required"));
+                    return Err(anyhow!(
+                        "Merge conflicts detected, manual resolution required"
+                    ));
                 }
 
                 // Create the merge commit
@@ -301,10 +316,12 @@ impl GitManager for GitImplementation {
     async fn delete_branch(&self, branch_name: &str) -> Result<()> {
         let repo = self.open_repo()?;
 
-        let mut branch = repo.find_branch(branch_name, BranchType::Local)
+        let mut branch = repo
+            .find_branch(branch_name, BranchType::Local)
             .with_context(|| format!("Failed to find branch: {}", branch_name))?;
 
-        branch.delete()
+        branch
+            .delete()
             .with_context(|| format!("Failed to delete branch: {}", branch_name))?;
 
         info!("Deleted branch: {}", branch_name);
@@ -321,9 +338,9 @@ impl GitManager for GitImplementation {
             )));
         }
 
-        let branch_name = head.shorthand().ok_or_else(|| anyhow::anyhow!(BorgError::GitError(
-            "Failed to get branch name".to_string()
-        )))?;
+        let branch_name = head.shorthand().ok_or_else(|| {
+            anyhow::anyhow!(BorgError::GitError("Failed to get branch name".to_string()))
+        })?;
 
         Ok(branch_name.to_string())
     }
@@ -369,7 +386,8 @@ impl GitManager for GitImplementation {
 
         if !path.exists() {
             return Err(anyhow::anyhow!(BorgError::GitError(format!(
-                "File does not exist: {}", file_path
+                "File does not exist: {}",
+                file_path
             ))));
         }
 

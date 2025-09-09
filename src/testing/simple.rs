@@ -6,7 +6,7 @@ use std::process::Command;
 use std::time::Instant;
 
 use crate::core::error::BorgError;
-use crate::testing::test_runner::{TestRunner, TestResult, TestMetrics};
+use crate::testing::test_runner::{TestMetrics, TestResult, TestRunner};
 
 /// A simple test runner for Rust code
 pub struct SimpleTestRunner {
@@ -38,20 +38,30 @@ impl SimpleTestRunner {
 
             if line.starts_with("test result:") {
                 // Parse the line like "test result: ok. 42 passed; 0 failed;"
-                if let Some(passed_str) = line.split_whitespace()
+                if let Some(passed_str) = line
+                    .split_whitespace()
                     .skip_while(|&s| !s.ends_with("passed;"))
                     .next()
                 {
-                    if let Ok(passed) = passed_str.trim_end_matches("passed;").trim().parse::<usize>() {
+                    if let Ok(passed) = passed_str
+                        .trim_end_matches("passed;")
+                        .trim()
+                        .parse::<usize>()
+                    {
                         tests_passed = passed;
                     }
                 }
 
-                if let Some(failed_str) = line.split_whitespace()
+                if let Some(failed_str) = line
+                    .split_whitespace()
                     .skip_while(|&s| !s.ends_with("failed;"))
                     .next()
                 {
-                    if let Ok(failed) = failed_str.trim_end_matches("failed;").trim().parse::<usize>() {
+                    if let Ok(failed) = failed_str
+                        .trim_end_matches("failed;")
+                        .trim()
+                        .parse::<usize>()
+                    {
                         tests_failed = failed;
                     }
                 }
@@ -99,7 +109,8 @@ impl TestRunner for SimpleTestRunner {
             Ok(output) => output,
             Err(e) => {
                 return Err(anyhow::anyhow!(BorgError::TestingError(format!(
-                    "Failed to run cargo test: {}", e
+                    "Failed to run cargo test: {}",
+                    e
                 ))));
             }
         };
@@ -142,9 +153,14 @@ impl TestRunner for SimpleTestRunner {
     }
 
     async fn run_benchmark(&self, branch: &str, target_path: Option<&Path>) -> Result<TestResult> {
-        info!("Running benchmarks on branch {} with SimpleTestRunner", branch);
+        info!(
+            "Running benchmarks on branch {} with SimpleTestRunner",
+            branch
+        );
 
-        let target_dir = target_path.map(|p| p.to_path_buf()).unwrap_or_else(|| self.workspace.clone());
+        let target_dir = target_path
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| self.workspace.clone());
         let start_time = Instant::now();
 
         let output = Command::new("cargo")

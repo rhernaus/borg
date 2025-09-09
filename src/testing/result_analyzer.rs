@@ -103,7 +103,8 @@ impl TestResultAnalyzer {
     pub fn new() -> Self {
         // These regex patterns are simplified and would need to be enhanced for a real implementation
         let error_regex = Regex::new(r"(?m)error(\[E\d+\])?: (.+?)\n-->(.+?):(\d+):(\d+)").unwrap();
-        let panic_regex = Regex::new(r"(?m)thread '.+?' panicked at '(.+?)',(.+?):(\d+):(\d+)").unwrap();
+        let panic_regex =
+            Regex::new(r"(?m)thread '.+?' panicked at '(.+?)',(.+?):(\d+):(\d+)").unwrap();
         let test_failure_regex = Regex::new(r"(?m)test (.+?) \.\.\. FAILED").unwrap();
 
         Self {
@@ -174,7 +175,9 @@ impl TestResultAnalyzer {
 
         // Compare performance if we have a baseline
         if let Some(baseline) = baseline {
-            if let (Some(result_metrics), Some(baseline_metrics)) = (&result.metrics, &baseline.metrics) {
+            if let (Some(result_metrics), Some(baseline_metrics)) =
+                (&result.metrics, &baseline.metrics)
+            {
                 if result_metrics.tests_run > 0 && baseline_metrics.tests_run > 0 {
                     // Calculate performance change based on test duration
                     let baseline_duration = baseline.duration.as_millis() as f64;
@@ -219,7 +222,8 @@ impl TestResultAnalyzer {
                     _ => "unknown location".to_string(),
                 };
 
-                feedback.push_str(&format!("{}. {} at {}: {}\n",
+                feedback.push_str(&format!(
+                    "{}. {} at {}: {}\n",
                     i + 1,
                     match error.error_type {
                         ErrorType::CompileError => "Compilation error",

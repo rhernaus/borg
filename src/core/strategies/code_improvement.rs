@@ -1,13 +1,13 @@
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use git2::{Repository, Signature, MergeOptions};
+use git2::{MergeOptions, Repository, Signature};
 use log::{error, info, warn};
+use regex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
-use regex;
 
 use crate::code_generation::generator::{CodeContext, CodeGenerator, CodeImprovement, FileChange};
 use crate::core::authentication::AuthenticationManager;
@@ -81,7 +81,9 @@ impl CodeImprovementStrategy {
     /// Create a code context from an optimization goal
     async fn create_code_context(&self, goal: &OptimizationGoal) -> Result<CodeContext> {
         // Get the file paths for the goal
-        let file_paths: Vec<String> = goal.tags.iter()
+        let file_paths: Vec<String> = goal
+            .tags
+            .iter()
             .filter(|tag| tag.starts_with("file:"))
             .map(|tag| tag.trim_start_matches("file:").to_string())
             .collect();
@@ -133,49 +135,67 @@ impl CodeImprovementStrategy {
     }
 
     /// Apply a code change to a branch
-    async fn apply_change(&self, goal: &OptimizationGoal, branch_name: &str, code: &str) -> Result<()> {
+    async fn apply_change(
+        &self,
+        goal: &OptimizationGoal,
+        branch_name: &str,
+        code: &str,
+    ) -> Result<()> {
         // Parse code changes
         let code_improvement = self.parse_code_changes(code)?;
-        info!("Parsed {} file changes to apply", code_improvement.target_files.len());
+        info!(
+            "Parsed {} file changes to apply",
+            code_improvement.target_files.len()
+        );
 
         // Open the Git repository
-        let repo = Repository::open(&self.working_dir)
-            .context(format!("Failed to open repository at {:?}", self.working_dir))?;
+        let repo = Repository::open(&self.working_dir).context(format!(
+            "Failed to open repository at {:?}",
+            self.working_dir
+        ))?;
 
         // Create or checkout the branch
-        let branch_exists = repo.find_branch(branch_name, git2::BranchType::Local).is_ok();
+        let branch_exists = repo
+            .find_branch(branch_name, git2::BranchType::Local)
+            .is_ok();
         info!("Branch {} exists: {}", branch_name, branch_exists);
 
         if branch_exists {
             // Checkout the existing branch
             info!("Checking out existing branch: {}", branch_name);
             let branch_ref = format!("refs/heads/{}", branch_name);
-            let obj = repo.revparse_single(&branch_ref)
+            let obj = repo
+                .revparse_single(&branch_ref)
                 .context(format!("Failed to find branch: {}", branch_name))?;
 
-            repo.checkout_tree(&obj, None)
-                .context(format!("Failed to checkout tree for branch: {}", branch_name))?;
+            repo.checkout_tree(&obj, None).context(format!(
+                "Failed to checkout tree for branch: {}",
+                branch_name
+            ))?;
 
             repo.set_head(&branch_ref)
                 .context(format!("Failed to set HEAD to branch: {}", branch_name))?;
         } else {
             // Create and checkout a new branch from HEAD
             info!("Creating new branch: {}", branch_name);
-            let head = repo.head()
-                .context("Failed to get HEAD reference")?;
+            let head = repo.head().context("Failed to get HEAD reference")?;
 
-            let head_commit = head.peel_to_commit()
+            let head_commit = head
+                .peel_to_commit()
                 .context("Failed to peel HEAD to commit")?;
 
             repo.branch(branch_name, &head_commit, false)
                 .context(format!("Failed to create branch: {}", branch_name))?;
 
             let branch_ref = format!("refs/heads/{}", branch_name);
-            let obj = repo.revparse_single(&branch_ref)
+            let obj = repo
+                .revparse_single(&branch_ref)
                 .context(format!("Failed to find branch: {}", branch_name))?;
 
-            repo.checkout_tree(&obj, None)
-                .context(format!("Failed to checkout tree for branch: {}", branch_name))?;
+            repo.checkout_tree(&obj, None).context(format!(
+                "Failed to checkout tree for branch: {}",
+                branch_name
+            ))?;
 
             repo.set_head(&branch_ref)
                 .context(format!("Failed to set HEAD to branch: {}", branch_name))?;
@@ -201,8 +221,7 @@ impl CodeImprovementStrategy {
                 .context(format!("Failed to write to file: {:?}", full_path))?;
 
             // Add the file to the staging area
-            let mut index = repo.index()
-                .context("Failed to get repository index")?;
+            let mut index = repo.index().context("Failed to get repository index")?;
 
             // Convert the file path to a relative path if needed
             let repo_relative_path = if file_path.is_absolute() {
@@ -212,25 +231,26 @@ impl CodeImprovementStrategy {
                 file_path
             };
 
-            index.add_path(repo_relative_path)
-                .context(format!("Failed to add file to index: {:?}", repo_relative_path))?;
+            index.add_path(repo_relative_path).context(format!(
+                "Failed to add file to index: {:?}",
+                repo_relative_path
+            ))?;
 
-            index.write()
-                .context("Failed to write index")?;
+            index.write().context("Failed to write index")?;
         }
 
         // Create a tree from the index
-        let mut index = repo.index()
-            .context("Failed to get repository index")?;
+        let mut index = repo.index().context("Failed to get repository index")?;
 
-        let tree_id = index.write_tree()
-            .context("Failed to write tree")?;
+        let tree_id = index.write_tree().context("Failed to write tree")?;
 
-        let tree = repo.find_tree(tree_id)
-            .context("Failed to find tree")?;
+        let tree = repo.find_tree(tree_id).context("Failed to find tree")?;
 
         // Get LLM to generate commit message
-        let commit_message = self.code_generator.generate_commit_message(&code_improvement, &goal.id, branch_name).await
+        let commit_message = self
+            .code_generator
+            .generate_commit_message(&code_improvement, &goal.id, branch_name)
+            .await
             .context("Failed to generate commit message")?;
 
         info!("LLM generated commit message: {}", commit_message);
@@ -240,19 +260,29 @@ impl CodeImprovementStrategy {
 
         // We need to get the current HEAD as the parent, which should now be the branch we're working on
         let head = repo.head().context("Failed to get HEAD")?;
-        let parent_commit = head.peel_to_commit().context("Failed to get parent commit")?;
+        let parent_commit = head
+            .peel_to_commit()
+            .context("Failed to get parent commit")?;
 
-        let commit_oid = repo.commit(
-            Some(&format!("refs/heads/{}", branch_name)),
-            &signature,
-            &signature,
-            &commit_message,
-            &tree,
-            &[&parent_commit],
-        ).context("Failed to create commit")?;
+        let commit_oid = repo
+            .commit(
+                Some(&format!("refs/heads/{}", branch_name)),
+                &signature,
+                &signature,
+                &commit_message,
+                &tree,
+                &[&parent_commit],
+            )
+            .context("Failed to create commit")?;
 
-        info!("Successfully created commit {} on branch {}", commit_oid, branch_name);
-        info!("Successfully applied changes for goal {} in branch {}", goal.id, branch_name);
+        info!(
+            "Successfully created commit {} on branch {}",
+            commit_oid, branch_name
+        );
+        info!(
+            "Successfully applied changes for goal {} in branch {}",
+            goal.id, branch_name
+        );
 
         Ok(())
     }
@@ -296,7 +326,12 @@ impl CodeImprovementStrategy {
     }
 
     /// Evaluate the results of a code change
-    async fn evaluate_results(&self, goal: &OptimizationGoal, branch: &str, test_passed: bool) -> Result<bool> {
+    async fn evaluate_results(
+        &self,
+        goal: &OptimizationGoal,
+        branch: &str,
+        test_passed: bool,
+    ) -> Result<bool> {
         if !test_passed {
             warn!("Tests failed for goal '{}' in branch '{}'", goal.id, branch);
             return Ok(false);
@@ -309,7 +344,9 @@ impl CodeImprovementStrategy {
             info!("Evaluating success metrics for goal '{}'", goal.id);
 
             // Run benchmarks if this is a performance-related goal
-            if goal.category == OptimizationCategory::Performance || goal.tags.iter().any(|t| t == "performance") {
+            if goal.category == OptimizationCategory::Performance
+                || goal.tags.iter().any(|t| t == "performance")
+            {
                 info!("Running benchmarks for performance goal");
 
                 let benchmark_result = self.test_runner.run_benchmark(branch, None).await?;
@@ -332,24 +369,30 @@ impl CodeImprovementStrategy {
 
     /// Execute a specific step of the plan - private implementation
     async fn execute_step_internal(&self, plan: &Plan, step_id: &str) -> Result<ExecutionResult> {
-        let step = plan.steps.iter().find(|s| s.id == step_id)
+        let step = plan
+            .steps
+            .iter()
+            .find(|s| s.id == step_id)
             .ok_or_else(|| anyhow!("Step with ID {} not found", step_id))?;
 
         info!("Executing step {} - {}", step.id, step.description);
 
         // Get the optimization goal
         let goal = {
-            let manager = self.optimization_manager.try_lock()
+            let manager = self
+                .optimization_manager
+                .try_lock()
                 .map_err(|_| anyhow!("Failed to acquire optimization manager lock"))?;
 
-            manager.get_goal(&plan.goal_id)
+            manager
+                .get_goal(&plan.goal_id)
                 .ok_or_else(|| anyhow!("Goal not found: {}", plan.goal_id))?
                 .clone()
         };
 
         // In a real implementation, we would create a proper code improvement request
         // For now, we'll just create a simple execution result
-        let metrics = HashMap::new();  // In a real implementation, we would calculate metrics
+        let metrics = HashMap::new(); // In a real implementation, we would calculate metrics
 
         // Create an execution result
         let result = ExecutionResult {
@@ -361,9 +404,7 @@ impl CodeImprovementStrategy {
                 outputs
             },
             metrics,
-            execution_log: vec![
-                format!("Executed step {}: {}", step.id, step.description)
-            ],
+            execution_log: vec![format!("Executed step {}: {}", step.id, step.description)],
         };
 
         Ok(result)
@@ -371,7 +412,10 @@ impl CodeImprovementStrategy {
 
     /// Execute the entire plan - private implementation
     async fn execute_full_plan_internal(&self, plan: &Plan) -> Result<ExecutionResult> {
-        info!("Executing full code improvement plan with {} steps", plan.steps.len());
+        info!(
+            "Executing full code improvement plan with {} steps",
+            plan.steps.len()
+        );
 
         let mut execution_log = Vec::new();
         let mut successes = 0;
@@ -380,10 +424,13 @@ impl CodeImprovementStrategy {
 
         // Get the optimization goals
         let goal = {
-            let manager = self.optimization_manager.try_lock()
+            let manager = self
+                .optimization_manager
+                .try_lock()
                 .map_err(|_| anyhow!("Failed to acquire optimization manager lock"))?;
 
-            manager.get_goal(&plan.goal_id)
+            manager
+                .get_goal(&plan.goal_id)
                 .ok_or_else(|| anyhow!("Goal not found: {}", plan.goal_id))?
                 .clone()
         };
@@ -400,7 +447,9 @@ impl CodeImprovementStrategy {
                 .context(format!("Failed to open repository at {:?}", repo_path))?;
 
             // Check if branch already exists
-            let branch_exists = repo.find_branch(&branch_name, git2::BranchType::Local).is_ok();
+            let branch_exists = repo
+                .find_branch(&branch_name, git2::BranchType::Local)
+                .is_ok();
 
             if !branch_exists {
                 info!("Creating branch {}", branch_name);
@@ -408,14 +457,17 @@ impl CodeImprovementStrategy {
 
                 // Create a new branch
                 let head = repo.head().context("Failed to get HEAD reference")?;
-                let head_commit = head.peel_to_commit().context("Failed to peel HEAD to commit")?;
+                let head_commit = head
+                    .peel_to_commit()
+                    .context("Failed to peel HEAD to commit")?;
 
                 repo.branch(&branch_name, &head_commit, false)
                     .context(format!("Failed to create branch '{}'", branch_name))?;
             }
 
             // Checkout the branch
-            let obj = repo.revparse_single(&format!("refs/heads/{}", branch_name))
+            let obj = repo
+                .revparse_single(&format!("refs/heads/{}", branch_name))
                 .context(format!("Failed to find branch '{}'", branch_name))?;
 
             repo.checkout_tree(&obj, None)
@@ -464,12 +516,15 @@ impl CodeImprovementStrategy {
                         start_line: None,
                         end_line: None,
                         new_content: "".to_string(),
-                    }
+                    },
                 ],
                 explanation: "Automated code improvement".to_string(),
             };
 
-            if let Err(e) = self.create_commit(&repo_path, &branch_name, &goal, &code_improvement).await {
+            if let Err(e) = self
+                .create_commit(&repo_path, &branch_name, &goal, &code_improvement)
+                .await
+            {
                 let err_msg = format!("Failed to create commit: {}", e);
                 error!("{}", err_msg);
                 execution_log.push(err_msg);
@@ -493,7 +548,10 @@ impl CodeImprovementStrategy {
         let message = if success {
             format!("Successfully executed plan with {} steps", plan.steps.len())
         } else {
-            format!("Plan execution partially failed: {} successes, {} failures", successes, failures)
+            format!(
+                "Plan execution partially failed: {} successes, {} failures",
+                successes, failures
+            )
         };
 
         Ok(ExecutionResult {
@@ -506,7 +564,10 @@ impl CodeImprovementStrategy {
     }
 
     /// Extract file changes from LLM response
-    fn parse_code_changes(&self, code: &str) -> Result<crate::code_generation::generator::CodeImprovement> {
+    fn parse_code_changes(
+        &self,
+        code: &str,
+    ) -> Result<crate::code_generation::generator::CodeImprovement> {
         info!("Parsing code changes from LLM response");
 
         // Create a dummy context with the LLM code
@@ -582,44 +643,56 @@ impl CodeImprovementStrategy {
     }
 
     /// Create a commit with the improvements in the given branch
-    async fn create_commit(&self, repo_path: &Path, branch_name: &str, goal: &OptimizationGoal, code_improvement: &CodeImprovement) -> Result<String> {
-        info!("Creating commit in branch {} for goal {}", branch_name, goal.id);
+    async fn create_commit(
+        &self,
+        repo_path: &Path,
+        branch_name: &str,
+        goal: &OptimizationGoal,
+        code_improvement: &CodeImprovement,
+    ) -> Result<String> {
+        info!(
+            "Creating commit in branch {} for goal {}",
+            branch_name, goal.id
+        );
 
         // First, generate the commit message using LLM, before opening any Git repository
-        let commit_message = self.code_generator.generate_commit_message(code_improvement, &goal.id, branch_name).await
+        let commit_message = self
+            .code_generator
+            .generate_commit_message(code_improvement, &goal.id, branch_name)
+            .await
             .context("Failed to generate commit message")?;
 
         info!("LLM generated commit message: {}", commit_message);
 
         // Now, open the repository and perform Git operations
-        let repo = Repository::open(repo_path)
-            .context("Failed to open repository")?;
+        let repo = Repository::open(repo_path).context("Failed to open repository")?;
 
-        let mut index = repo.index()
-            .context("Failed to get repository index")?;
+        let mut index = repo.index().context("Failed to get repository index")?;
 
-        let tree_id = index.write_tree()
-            .context("Failed to write tree")?;
+        let tree_id = index.write_tree().context("Failed to write tree")?;
 
-        let tree = repo.find_tree(tree_id)
-            .context("Failed to find tree")?;
+        let tree = repo.find_tree(tree_id).context("Failed to find tree")?;
 
         let signature = Signature::now("Borg Agent", "borg@example.com")
             .context("Failed to create signature")?;
 
         // We need to get the current HEAD as the parent, which should now be the branch we're working on
         let head = repo.head().context("Failed to get HEAD")?;
-        let parent_commit = head.peel_to_commit().context("Failed to get parent commit")?;
+        let parent_commit = head
+            .peel_to_commit()
+            .context("Failed to get parent commit")?;
 
         // Create the commit with the message generated by the LLM
-        let commit_id = repo.commit(
-            Some("HEAD"),
-            &signature,
-            &signature,
-            &commit_message,
-            &tree,
-            &[&parent_commit]
-        ).context("Failed to create commit")?;
+        let commit_id = repo
+            .commit(
+                Some("HEAD"),
+                &signature,
+                &signature,
+                &commit_message,
+                &tree,
+                &[&parent_commit],
+            )
+            .context("Failed to create commit")?;
 
         info!("Created commit: {}", commit_id);
 
@@ -636,8 +709,7 @@ impl CodeImprovementStrategy {
 
         {
             // Open the repository and collect information
-            let repo = Repository::open(repo_path)
-                .context("Failed to open repository")?;
+            let repo = Repository::open(repo_path).context("Failed to open repository")?;
 
             // Try to find main branch name
             main_branch_name = if repo.find_branch("master", git2::BranchType::Local).is_ok() {
@@ -647,22 +719,31 @@ impl CodeImprovementStrategy {
             };
 
             // Get list of commits in branch that aren't in main
-            let branch_obj = repo.revparse_single(&format!("refs/heads/{}", branch))
+            let branch_obj = repo
+                .revparse_single(&format!("refs/heads/{}", branch))
                 .context(format!("Failed to find branch '{}'", branch))?;
 
-            let branch_commit = branch_obj.peel_to_commit()
+            let branch_commit = branch_obj
+                .peel_to_commit()
                 .context(format!("Failed to peel branch '{}' to commit", branch))?;
 
-            let main_obj = repo.revparse_single(&format!("refs/heads/{}", main_branch_name))
+            let main_obj = repo
+                .revparse_single(&format!("refs/heads/{}", main_branch_name))
                 .context(format!("Failed to find {} branch", main_branch_name))?;
 
-            let main_commit = main_obj.peel_to_commit()
-                .context(format!("Failed to peel {} branch to commit", main_branch_name))?;
+            let main_commit = main_obj.peel_to_commit().context(format!(
+                "Failed to peel {} branch to commit",
+                main_branch_name
+            ))?;
 
             // Create a simple summary of commits
             let mut revwalk = repo.revwalk().context("Failed to create revwalk")?;
-            revwalk.push(branch_commit.id()).context("Failed to push branch commit to revwalk")?;
-            revwalk.hide(main_commit.id()).context("Failed to hide main commit in revwalk")?;
+            revwalk
+                .push(branch_commit.id())
+                .context("Failed to push branch commit to revwalk")?;
+            revwalk
+                .hide(main_commit.id())
+                .context("Failed to hide main commit in revwalk")?;
 
             for oid in revwalk {
                 if let Ok(oid) = oid {
@@ -675,16 +756,19 @@ impl CodeImprovementStrategy {
             }
 
             if summary.is_empty() {
-                summary = format!("Branch '{}' has changes that need to be merged into {}", branch, main_branch_name);
+                summary = format!(
+                    "Branch '{}' has changes that need to be merged into {}",
+                    branch, main_branch_name
+                );
             }
         } // End of Git object scope
 
         // Use LLM to get guidance on merge
-        let merge_guidance = self.code_generator.handle_merge_operation(
-            branch,
-            &main_branch_name,
-            &summary
-        ).await.context("Failed to get merge guidance from LLM")?;
+        let merge_guidance = self
+            .code_generator
+            .handle_merge_operation(branch, &main_branch_name, &summary)
+            .await
+            .context("Failed to get merge guidance from LLM")?;
 
         info!("LLM merge guidance: {}", merge_guidance);
 
@@ -692,17 +776,20 @@ impl CodeImprovementStrategy {
         let mut merge_message = format!("Merge branch '{}' into {}", branch, main_branch_name);
         if let Some(msg_start) = merge_guidance.find("MERGE COMMIT MESSAGE:") {
             if let Some(msg_end) = merge_guidance[msg_start..].find("\n\n") {
-                merge_message = merge_guidance[msg_start + "MERGE COMMIT MESSAGE:".len()..msg_start + msg_end].trim().to_string();
+                merge_message = merge_guidance
+                    [msg_start + "MERGE COMMIT MESSAGE:".len()..msg_start + msg_end]
+                    .trim()
+                    .to_string();
             }
         }
 
         // Perform the actual merge in a new scope to avoid async boundary issues
         {
-            let repo = Repository::open(repo_path)
-                .context("Failed to open repository")?;
+            let repo = Repository::open(repo_path).context("Failed to open repository")?;
 
             // Checkout the main branch
-            let obj = repo.revparse_single(&format!("refs/heads/{}", main_branch_name))
+            let obj = repo
+                .revparse_single(&format!("refs/heads/{}", main_branch_name))
                 .context(format!("Failed to find {} branch", main_branch_name))?;
 
             repo.checkout_tree(&obj, None)
@@ -714,17 +801,23 @@ impl CodeImprovementStrategy {
             info!("Checked out {} branch", main_branch_name);
 
             // Find the annotated commit for our branch
-            let branch_ref = repo.find_reference(&format!("refs/heads/{}", branch))
+            let branch_ref = repo
+                .find_reference(&format!("refs/heads/{}", branch))
                 .context(format!("Failed to find branch reference '{}'", branch))?;
 
-            let annotated_commit = repo.reference_to_annotated_commit(&branch_ref)
+            let annotated_commit = repo
+                .reference_to_annotated_commit(&branch_ref)
                 .context("Failed to convert reference to annotated commit")?;
 
-            let (merge_analysis, _) = repo.merge_analysis(&[&annotated_commit])
+            let (merge_analysis, _) = repo
+                .merge_analysis(&[&annotated_commit])
                 .context("Failed to analyze merge")?;
 
             if merge_analysis.is_up_to_date() {
-                info!("Branch {} is already merged into {}", branch, main_branch_name);
+                info!(
+                    "Branch {} is already merged into {}",
+                    branch, main_branch_name
+                );
                 return Ok(());
             }
 
@@ -740,7 +833,8 @@ impl CodeImprovementStrategy {
                 .context("Failed to merge branches")?;
 
             // Check for conflicts
-            let statuses = repo.statuses(None)
+            let statuses = repo
+                .statuses(None)
                 .context("Failed to get repository status")?;
 
             let mut has_conflicts = false;
@@ -753,29 +847,32 @@ impl CodeImprovementStrategy {
 
             if has_conflicts {
                 info!("Conflicts detected. LLM guidance: {}", merge_guidance);
-                return Err(anyhow!("Merge conflicts detected. Manual resolution required."));
+                return Err(anyhow!(
+                    "Merge conflicts detected. Manual resolution required."
+                ));
             }
 
             // Create the merge commit
-            let mut index = repo.index()
-                .context("Failed to get repository index")?;
+            let mut index = repo.index().context("Failed to get repository index")?;
 
-            let tree_id = index.write_tree()
-                .context("Failed to write tree")?;
+            let tree_id = index.write_tree().context("Failed to write tree")?;
 
-            let tree = repo.find_tree(tree_id)
-                .context("Failed to find tree")?;
+            let tree = repo.find_tree(tree_id).context("Failed to find tree")?;
 
             let signature = Signature::now("Borg Agent", "borg@example.com")
                 .context("Failed to create signature")?;
 
             let head = repo.head().context("Failed to get HEAD")?;
-            let head_commit = head.peel_to_commit().context("Failed to peel HEAD to commit")?;
+            let head_commit = head
+                .peel_to_commit()
+                .context("Failed to peel HEAD to commit")?;
 
-            let branch_ref = repo.find_reference(&format!("refs/heads/{}", branch))
+            let branch_ref = repo
+                .find_reference(&format!("refs/heads/{}", branch))
                 .context(format!("Failed to find branch reference '{}'", branch))?;
 
-            let branch_commit = branch_ref.peel_to_commit()
+            let branch_commit = branch_ref
+                .peel_to_commit()
                 .context("Failed to peel branch reference to commit")?;
 
             repo.commit(
@@ -784,13 +881,18 @@ impl CodeImprovementStrategy {
                 &signature,
                 &merge_message,
                 &tree,
-                &[&head_commit, &branch_commit]
-            ).context("Failed to create merge commit")?;
+                &[&head_commit, &branch_commit],
+            )
+            .context("Failed to create merge commit")?;
 
             // Clean up the merge state
-            repo.cleanup_state().context("Failed to cleanup merge state")?;
+            repo.cleanup_state()
+                .context("Failed to cleanup merge state")?;
 
-            info!("Successfully merged branch {} into {}", branch, main_branch_name);
+            info!(
+                "Successfully merged branch {} into {}",
+                branch, main_branch_name
+            );
         } // End of Git operations scope
 
         Ok(())
@@ -809,14 +911,22 @@ impl CodeImprovementStrategy {
         permissions.push(CodePermission::ExecuteTests);
 
         // If the goal involves configuration, add that permission
-        if goal.description.to_lowercase().contains("config") ||
-           goal.tags.iter().any(|tag| tag.to_lowercase().contains("config")) {
+        if goal.description.to_lowercase().contains("config")
+            || goal
+                .tags
+                .iter()
+                .any(|tag| tag.to_lowercase().contains("config"))
+        {
             permissions.push(CodePermission::ModifyConfiguration);
         }
 
         // If the goal involves merging, add that permission
-        if goal.description.to_lowercase().contains("merge") ||
-           goal.tags.iter().any(|tag| tag.to_lowercase().contains("merge")) {
+        if goal.description.to_lowercase().contains("merge")
+            || goal
+                .tags
+                .iter()
+                .any(|tag| tag.to_lowercase().contains("merge"))
+        {
             permissions.push(CodePermission::MergeCode);
         }
 
@@ -824,7 +934,10 @@ impl CodeImprovementStrategy {
     }
 
     /// Get the required permissions for a goal - private implementation
-    fn get_required_permissions_for_goal_internal(&self, goal: &OptimizationGoal) -> Vec<ActionPermission> {
+    fn get_required_permissions_for_goal_internal(
+        &self,
+        goal: &OptimizationGoal,
+    ) -> Vec<ActionPermission> {
         // For code improvement, we need permissions to:
         // 1. Read code files
         // 2. Write code files
@@ -834,7 +947,9 @@ impl CodeImprovementStrategy {
 
         vec![
             ActionPermission {
-                scope: PermissionScope::LocalFileSystem(self.working_dir.to_string_lossy().to_string()),
+                scope: PermissionScope::LocalFileSystem(
+                    self.working_dir.to_string_lossy().to_string(),
+                ),
                 requires_confirmation: false,
                 audit_level: "high".to_string(),
                 expiry: None,
@@ -851,7 +966,9 @@ impl CodeImprovementStrategy {
     fn get_permissions(&self) -> Vec<ActionPermission> {
         vec![
             ActionPermission {
-                scope: PermissionScope::LocalFileSystem(self.working_dir.to_string_lossy().to_string()),
+                scope: PermissionScope::LocalFileSystem(
+                    self.working_dir.to_string_lossy().to_string(),
+                ),
                 requires_confirmation: false,
                 audit_level: "high".to_string(),
                 expiry: None,
@@ -891,15 +1008,30 @@ impl Strategy for CodeImprovementStrategy {
         let goal_id = goal.id.clone();
 
         // Create a branch name for this improvement
-        let category_slug = if let Some(category_tag) = goal.tags.iter().find(|tag|
-            ["performance", "readability", "test-coverage", "security", "complexity",
-             "error-handling", "compatibility", "financial", "general"].contains(&tag.as_str())) {
+        let category_slug = if let Some(category_tag) = goal.tags.iter().find(|tag| {
+            [
+                "performance",
+                "readability",
+                "test-coverage",
+                "security",
+                "complexity",
+                "error-handling",
+                "compatibility",
+                "financial",
+                "general",
+            ]
+            .contains(&tag.as_str())
+        }) {
             category_tag.clone()
         } else {
             goal.category.to_string().to_lowercase()
         };
 
-        let branch_name = format!("improvement/{}/{}", category_slug.replace(' ', "_"), goal.id);
+        let branch_name = format!(
+            "improvement/{}/{}",
+            category_slug.replace(' ', "_"),
+            goal.id
+        );
 
         // Create steps for the plan
         let mut steps = Vec::new();
@@ -1011,7 +1143,9 @@ impl Strategy for CodeImprovementStrategy {
 
         // Check if there's an authenticated user
         if auth_manager.current_user().is_none() {
-            info!("No authenticated user found, but we're in permissive mode - granting permission");
+            info!(
+                "No authenticated user found, but we're in permissive mode - granting permission"
+            );
             return Ok(true);
         }
 
@@ -1023,7 +1157,10 @@ impl Strategy for CodeImprovementStrategy {
 
         // Get the permissions required for this goal (for logging purposes only)
         let required_permissions = self.get_required_permissions_for_goal_internal(goal);
-        info!("Goal requires {} permissions - granting all in permissive mode", required_permissions.len());
+        info!(
+            "Goal requires {} permissions - granting all in permissive mode",
+            required_permissions.len()
+        );
 
         // In permissive mode, always grant permission
         Ok(true)
@@ -1033,7 +1170,9 @@ impl Strategy for CodeImprovementStrategy {
     fn required_permissions(&self) -> Vec<ActionPermission> {
         vec![
             ActionPermission {
-                scope: PermissionScope::LocalFileSystem(self.working_dir.to_string_lossy().to_string()),
+                scope: PermissionScope::LocalFileSystem(
+                    self.working_dir.to_string_lossy().to_string(),
+                ),
                 requires_confirmation: false,
                 audit_level: "high".to_string(),
                 expiry: None,

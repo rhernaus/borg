@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use log::{debug, error, info};
 use serde::Deserialize;
-use tokio::sync::RwLock;
 use thiserror::Error;
+use tokio::sync::RwLock;
 
 use super::models::{Entity, Record};
 
@@ -59,8 +59,7 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> FileDb<T> {
         let data_dir = data_dir.as_ref().to_path_buf();
 
         // Create data directory if it doesn't exist
-        fs::create_dir_all(&data_dir)
-            .map_err(|e| DatabaseError::IoError(e))?;
+        fs::create_dir_all(&data_dir).map_err(|e| DatabaseError::IoError(e))?;
 
         let db = Self {
             data_dir,
@@ -86,21 +85,26 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> FileDb<T> {
 
         // If file doesn't exist, just return empty cache
         if !path.exists() {
-            debug!("Collection file not found at {:?}, starting with empty database", path);
+            debug!(
+                "Collection file not found at {:?}, starting with empty database",
+                path
+            );
             return Ok(());
         }
 
-        info!("Loading collection {} from {:?}", self.collection_name, path);
+        info!(
+            "Loading collection {} from {:?}",
+            self.collection_name, path
+        );
 
         // Open and read the file
-        let file = File::open(&path)
-            .map_err(|e| DatabaseError::IoError(e))?;
+        let file = File::open(&path).map_err(|e| DatabaseError::IoError(e))?;
 
         let reader = BufReader::new(file);
 
         // Deserialize records from JSON
-        let records: Vec<Record<T>> = serde_json::from_reader(reader)
-            .map_err(|e| DatabaseError::SerializationError(e))?;
+        let records: Vec<Record<T>> =
+            serde_json::from_reader(reader).map_err(|e| DatabaseError::SerializationError(e))?;
 
         // Update cache with loaded records
         let mut cache = self.cache.write().await;
@@ -110,7 +114,11 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> FileDb<T> {
             cache.insert(record.id(), record);
         }
 
-        info!("Successfully loaded {} records from {}", cache.len(), self.collection_name);
+        info!(
+            "Successfully loaded {} records from {}",
+            cache.len(),
+            self.collection_name
+        );
         Ok(())
     }
 
@@ -128,8 +136,7 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> FileDb<T> {
         let records: Vec<Record<T>> = cache.values().cloned().collect();
 
         // Open a writer to the temporary file
-        let file = File::create(&temp_path)
-            .map_err(|e| DatabaseError::IoError(e))?;
+        let file = File::create(&temp_path).map_err(|e| DatabaseError::IoError(e))?;
 
         let writer = BufWriter::new(file);
 
@@ -138,10 +145,13 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> FileDb<T> {
             .map_err(|e| DatabaseError::SerializationError(e))?;
 
         // Atomically rename the temporary file to the actual file
-        fs::rename(&temp_path, &path)
-            .map_err(|e| DatabaseError::IoError(e))?;
+        fs::rename(&temp_path, &path).map_err(|e| DatabaseError::IoError(e))?;
 
-        info!("Successfully saved {} records to {}", records.len(), self.collection_name);
+        info!(
+            "Successfully saved {} records to {}",
+            records.len(),
+            self.collection_name
+        );
         Ok(())
     }
 
@@ -149,7 +159,8 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> FileDb<T> {
     pub async fn get(&self, id: &T::Id) -> DbResult<Record<T>> {
         let cache = self.cache.read().await;
 
-        cache.get(id)
+        cache
+            .get(id)
             .cloned()
             .ok_or_else(|| DatabaseError::NotFound(id.as_ref().to_string()))
     }

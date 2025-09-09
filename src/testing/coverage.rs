@@ -2,10 +2,10 @@ use anyhow::{Context, Result};
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
-use std::fs;
 
 use crate::core::error::BorgError;
 
@@ -66,8 +66,10 @@ impl CoverageReporter {
         let coverage_dir = workspace_path.join("target").join("coverage");
 
         // Create coverage directory if it doesn't exist
-        fs::create_dir_all(&coverage_dir)
-            .context(format!("Failed to create coverage directory at {:?}", coverage_dir))?;
+        fs::create_dir_all(&coverage_dir).context(format!(
+            "Failed to create coverage directory at {:?}",
+            coverage_dir
+        ))?;
 
         Ok(Self {
             workspace: workspace_path,
@@ -88,19 +90,27 @@ impl CoverageReporter {
         cmd.current_dir(&self.workspace)
             .env("CARGO_INCREMENTAL", "0")
             .env("RUSTFLAGS", "-Cinstrument-coverage")
-            .env("LLVM_PROFILE_FILE", self.coverage_dir.join("coverage-%p-%m.profraw").to_string_lossy().to_string())
+            .env(
+                "LLVM_PROFILE_FILE",
+                self.coverage_dir
+                    .join("coverage-%p-%m.profraw")
+                    .to_string_lossy()
+                    .to_string(),
+            )
             .arg("test")
             .arg("--all-features");
 
         // Run the tests with coverage instrumentation
-        let output = cmd.output()
+        let output = cmd
+            .output()
             .context("Failed to run tests with coverage instrumentation")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!(BorgError::TestingError(
-                format!("Tests failed while generating coverage: {}", stderr)
-            )));
+            return Err(anyhow::anyhow!(BorgError::TestingError(format!(
+                "Tests failed while generating coverage: {}",
+                stderr
+            ))));
         }
 
         // Generate coverage report with grcov
@@ -108,7 +118,13 @@ impl CoverageReporter {
             .current_dir(&self.workspace)
             .arg(self.coverage_dir.to_string_lossy().to_string())
             .arg("--binary-path")
-            .arg(self.workspace.join("target").join("debug").to_string_lossy().to_string())
+            .arg(
+                self.workspace
+                    .join("target")
+                    .join("debug")
+                    .to_string_lossy()
+                    .to_string(),
+            )
             .arg("-s")
             .arg(self.workspace.to_string_lossy().to_string())
             .arg("-t")
@@ -123,15 +139,21 @@ impl CoverageReporter {
             .arg("--ignore")
             .arg("target/*")
             .arg("-o")
-            .arg(self.coverage_dir.join("lcov.info").to_string_lossy().to_string())
+            .arg(
+                self.coverage_dir
+                    .join("lcov.info")
+                    .to_string_lossy()
+                    .to_string(),
+            )
             .output()
             .context("Failed to run grcov")?;
 
         if !grcov_output.status.success() {
             let stderr = String::from_utf8_lossy(&grcov_output.stderr);
-            return Err(anyhow::anyhow!(BorgError::TestingError(
-                format!("grcov failed: {}", stderr)
-            )));
+            return Err(anyhow::anyhow!(BorgError::TestingError(format!(
+                "grcov failed: {}",
+                stderr
+            ))));
         }
 
         // Parse the lcov.info file to extract coverage data
@@ -168,19 +190,17 @@ impl CoverageReporter {
         };
 
         info!("Coverage report generated in {:?}", generation_time);
-        info!("Overall coverage: {:.2}% ({}/{} lines)",
-              report.total_coverage_percentage,
-              report.total_covered_lines,
-              report.total_lines);
+        info!(
+            "Overall coverage: {:.2}% ({}/{} lines)",
+            report.total_coverage_percentage, report.total_covered_lines, report.total_lines
+        );
 
         Ok(report)
     }
 
     /// Check if grcov is installed
     fn check_grcov(&self) -> Result<()> {
-        let status = Command::new("grcov")
-            .arg("--version")
-            .status();
+        let status = Command::new("grcov").arg("--version").status();
 
         match status {
             Ok(status) if status.success() => Ok(()),
@@ -234,7 +254,12 @@ impl CoverageReporter {
     }
 
     /// Create a FileCoverage struct from parsed data
-    fn create_file_coverage(&self, file_path: &str, line_coverage: &HashMap<usize, bool>, total_lines: usize) -> FileCoverage {
+    fn create_file_coverage(
+        &self,
+        file_path: &str,
+        line_coverage: &HashMap<usize, bool>,
+        total_lines: usize,
+    ) -> FileCoverage {
         let mut covered_lines = 0;
         let mut covered_line_numbers = Vec::new();
         let mut uncovered_line_numbers = Vec::new();
@@ -270,9 +295,18 @@ impl CoverageReporter {
 
         // Overall summary
         output.push_str("# Test Coverage Report\n\n");
-        output.push_str(&format!("**Overall Coverage:** {:.2}%\n", report.total_coverage_percentage));
-        output.push_str(&format!("**Lines Covered:** {}/{}\n", report.total_covered_lines, report.total_lines));
-        output.push_str(&format!("**Generated in:** {:.2} seconds\n\n", report.generation_time.as_secs_f64()));
+        output.push_str(&format!(
+            "**Overall Coverage:** {:.2}%\n",
+            report.total_coverage_percentage
+        ));
+        output.push_str(&format!(
+            "**Lines Covered:** {}/{}\n",
+            report.total_covered_lines, report.total_lines
+        ));
+        output.push_str(&format!(
+            "**Generated in:** {:.2} seconds\n\n",
+            report.generation_time.as_secs_f64()
+        ));
 
         // File table
         output.push_str("## File Coverage\n\n");
@@ -281,17 +315,18 @@ impl CoverageReporter {
 
         // Sort files by coverage percentage (ascending)
         let mut sorted_files = report.files.clone();
-        sorted_files.sort_by(|a, b| a.coverage_percentage.partial_cmp(&b.coverage_percentage).unwrap());
+        sorted_files.sort_by(|a, b| {
+            a.coverage_percentage
+                .partial_cmp(&b.coverage_percentage)
+                .unwrap()
+        });
 
         for file in &sorted_files {
             // Skip files with 100% coverage
             if file.coverage_percentage < 100.0 {
                 output.push_str(&format!(
                     "| {} | {:.2}% | {}/{} |\n",
-                    file.file_path,
-                    file.coverage_percentage,
-                    file.covered_lines,
-                    file.total_lines
+                    file.file_path, file.coverage_percentage, file.covered_lines, file.total_lines
                 ));
             }
         }
@@ -304,7 +339,10 @@ impl CoverageReporter {
                 for file in &sorted_files {
                     if file.coverage_percentage < 80.0 {
                         output.push_str(&format!("### {}\n", file.file_path));
-                        output.push_str(&format!("**Coverage:** {:.2}%\n\n", file.coverage_percentage));
+                        output.push_str(&format!(
+                            "**Coverage:** {:.2}%\n\n",
+                            file.coverage_percentage
+                        ));
 
                         if !file.uncovered_line_numbers.is_empty() {
                             output.push_str("**Uncovered Lines:**\n");

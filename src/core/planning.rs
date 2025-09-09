@@ -1,19 +1,21 @@
+use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
+use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::fs;
+use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time;
-use std::time::Duration;
-use anyhow::{Result, Context};
-use log::{info, warn, debug};
-use chrono::{DateTime, Utc};
-use std::path::Path;
-use std::fs;
 
-use crate::core::optimization::{OptimizationManager, OptimizationGoal, OptimizationCategory, PriorityLevel, GoalStatus};
-use crate::core::ethics::EthicsManager;
 use crate::code_generation::llm::{LlmFactory, LlmProvider};
 use crate::core::config::{LlmConfig, LlmLoggingConfig};
+use crate::core::ethics::EthicsManager;
+use crate::core::optimization::{
+    GoalStatus, OptimizationCategory, OptimizationGoal, OptimizationManager, PriorityLevel,
+};
 
 /// Status of a planning milestone
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -79,13 +81,7 @@ pub struct StrategicObjective {
 
 impl StrategicObjective {
     /// Create a new strategic objective
-    pub fn new(
-        id: &str,
-        title: &str,
-        description: &str,
-        timeframe: u32,
-        creator: &str,
-    ) -> Self {
+    pub fn new(id: &str, title: &str, description: &str, timeframe: u32, creator: &str) -> Self {
         Self {
             id: id.to_string(),
             title: title.to_string(),
@@ -301,10 +297,7 @@ impl StrategicPlan {
     pub fn get_ready_milestones(&self) -> Vec<&Milestone> {
         self.milestones
             .iter()
-            .filter(|m|
-                m.status == MilestoneStatus::Planned &&
-                !m.is_blocked(&self.milestones)
-            )
+            .filter(|m| m.status == MilestoneStatus::Planned && !m.is_blocked(&self.milestones))
             .collect()
     }
 
@@ -312,7 +305,9 @@ impl StrategicPlan {
     pub fn update_objectives_progress(&mut self) {
         for objective in &mut self.objectives {
             // Clone the milestones IDs to avoid borrowing self immutably and mutably at the same time
-            let milestone_ids: Vec<String> = self.milestones.iter()
+            let milestone_ids: Vec<String> = self
+                .milestones
+                .iter()
                 .filter(|m| m.parent_objective_id == objective.id)
                 .map(|m| m.id.clone())
                 .collect();
@@ -322,7 +317,9 @@ impl StrategicPlan {
             }
 
             let total_milestones = milestone_ids.len();
-            let achieved_milestones = self.milestones.iter()
+            let achieved_milestones = self
+                .milestones
+                .iter()
                 .filter(|m| milestone_ids.contains(&m.id) && m.status == MilestoneStatus::Achieved)
                 .count();
 
@@ -413,7 +410,8 @@ impl StrategicPlanningManager {
         let plan_json = fs::read_to_string(plan_path)?;
         self.plan = serde_json::from_str(&plan_json)?;
 
-        info!("Loaded strategic plan with {} objectives and {} milestones",
+        info!(
+            "Loaded strategic plan with {} objectives and {} milestones",
             self.plan.objectives.len(),
             self.plan.milestones.len()
         );
@@ -481,9 +479,12 @@ impl StrategicPlanningManager {
 
     /// Get active milestones (planned or in progress)
     pub fn get_active_milestones(&self) -> Vec<&Milestone> {
-        self.plan.milestones
+        self.plan
+            .milestones
             .iter()
-            .filter(|m| m.status == MilestoneStatus::Planned || m.status == MilestoneStatus::InProgress)
+            .filter(|m| {
+                m.status == MilestoneStatus::Planned || m.status == MilestoneStatus::InProgress
+            })
             .collect()
     }
 
@@ -544,7 +545,10 @@ impl StrategicPlanningManager {
         let llm = match self.get_llm_provider().await {
             Ok(provider) => provider,
             Err(e) => {
-                warn!("Failed to create LLM provider: {} - using fallback strategy", e);
+                warn!(
+                    "Failed to create LLM provider: {} - using fallback strategy",
+                    e
+                );
                 return Ok(self.plan.clone());
             }
         };
@@ -558,24 +562,34 @@ impl StrategicPlanningManager {
         // Call the LLM with the prompt but with a timeout to prevent hanging
         let llm_response = time::timeout(
             Duration::from_secs(5), // 5 second timeout
-            llm.generate(&prompt, Some(4096), Some(0.7))
-        ).await;
+            llm.generate(&prompt, Some(4096), Some(0.7)),
+        )
+        .await;
 
         match llm_response {
             Ok(Ok(response)) => {
                 // Successfully got a response within the timeout
                 info!("Received LLM response for strategic plan generation");
                 info!("LLM response length: {} characters", response.len());
-                debug!("LLM response excerpt: {}",
-                       if response.len() > 100 { &response[0..100] } else { &response });
+                debug!(
+                    "LLM response excerpt: {}",
+                    if response.len() > 100 {
+                        &response[0..100]
+                    } else {
+                        &response
+                    }
+                );
 
                 // In a real implementation, we would parse the response and update the plan
                 // For now, we'll just log that we received a response and use the existing plan
-            },
+            }
             Ok(Err(e)) => {
                 // LLM call returned an error within the timeout
-                warn!("Error generating strategic plan with LLM: {} - using fallback strategy", e);
-            },
+                warn!(
+                    "Error generating strategic plan with LLM: {} - using fallback strategy",
+                    e
+                );
+            }
             Err(_) => {
                 // LLM call timed out
                 warn!("LLM call timed out after 5 seconds - using fallback strategy");
@@ -586,9 +600,11 @@ impl StrategicPlanningManager {
         new_plan.updated_at = Utc::now();
         new_plan.last_planning_cycle = Some(Utc::now());
 
-        info!("Generated strategic plan with {} objectives and {} milestones",
+        info!(
+            "Generated strategic plan with {} objectives and {} milestones",
             new_plan.objectives.len(),
-            new_plan.milestones.len());
+            new_plan.milestones.len()
+        );
 
         Ok(new_plan)
     }
@@ -641,7 +657,10 @@ impl StrategicPlanningManager {
                 prompt.push_str(&format!("### Milestone: {} (ID: {})\n", ms.title, ms.id));
                 prompt.push_str(&format!("Description: {}\n", ms.description));
                 prompt.push_str(&format!("Parent Objective: {}\n", ms.parent_objective_id));
-                prompt.push_str(&format!("Target Date: {}\n", ms.target_date.format("%Y-%m-%d")));
+                prompt.push_str(&format!(
+                    "Target Date: {}\n",
+                    ms.target_date.format("%Y-%m-%d")
+                ));
                 prompt.push_str(&format!("Status: {:?}\n", ms.status));
                 prompt.push_str(&format!("Progress: {}%\n", ms.progress));
 
@@ -706,15 +725,24 @@ impl StrategicPlanningManager {
     }
 
     /// Generate milestones for an objective using LLM
-    pub async fn generate_milestones_for_objective(&self, objective: &StrategicObjective) -> Result<Vec<Milestone>> {
+    pub async fn generate_milestones_for_objective(
+        &self,
+        objective: &StrategicObjective,
+    ) -> Result<Vec<Milestone>> {
         // Instead of generating simulated milestones, use the LLM for generation
         if !objective.key_results.is_empty() {
-            info!("Generating milestones for objective {} using LLM", objective.id);
+            info!(
+                "Generating milestones for objective {} using LLM",
+                objective.id
+            );
 
             let llm = match self.get_llm_provider().await {
                 Ok(provider) => provider,
                 Err(e) => {
-                    warn!("Failed to create LLM provider: {} - using fallback strategy", e);
+                    warn!(
+                        "Failed to create LLM provider: {} - using fallback strategy",
+                        e
+                    );
                     return self.generate_fallback_milestones(objective);
                 }
             };
@@ -725,26 +753,36 @@ impl StrategicPlanningManager {
             // Call the LLM with the prompt but with a timeout to prevent hanging
             let llm_response = time::timeout(
                 Duration::from_secs(5), // 5 second timeout
-                llm.generate(&prompt, Some(2048), Some(0.7))
-            ).await;
+                llm.generate(&prompt, Some(2048), Some(0.7)),
+            )
+            .await;
 
             match llm_response {
                 Ok(Ok(response)) => {
                     // Successfully got a response within the timeout
                     info!("Received LLM response for milestone generation");
                     info!("LLM response length: {} characters", response.len());
-                    debug!("LLM response excerpt: {}",
-                           if response.len() > 100 { &response[0..100] } else { &response });
+                    debug!(
+                        "LLM response excerpt: {}",
+                        if response.len() > 100 {
+                            &response[0..100]
+                        } else {
+                            &response
+                        }
+                    );
 
                     // For now, use the fallback method as we're still working on parsing the LLM response
                     warn!("LLM milestone parsing not yet implemented - using fallback strategy");
                     self.generate_fallback_milestones(objective)
-                },
+                }
                 Ok(Err(e)) => {
                     // LLM call returned an error within the timeout
-                    warn!("Error generating milestones with LLM: {} - using fallback strategy", e);
+                    warn!(
+                        "Error generating milestones with LLM: {} - using fallback strategy",
+                        e
+                    );
                     self.generate_fallback_milestones(objective)
-                },
+                }
                 Err(_) => {
                     // LLM call timed out
                     warn!("LLM call timed out after 5 seconds - using fallback strategy");
@@ -753,7 +791,10 @@ impl StrategicPlanningManager {
             }
         } else {
             // If no key results, generate a basic milestone
-            warn!("Objective {} has no key results, creating a basic milestone", objective.id);
+            warn!(
+                "Objective {} has no key results, creating a basic milestone",
+                objective.id
+            );
 
             let milestone_id = format!("{}-m1", objective.id);
             let milestone_title = format!("Complete {}", objective.title);
@@ -779,7 +820,10 @@ impl StrategicPlanningManager {
         );
 
         // Add objective details
-        prompt.push_str(&format!("## Strategic Objective: {} (ID: {})\n", objective.title, objective.id));
+        prompt.push_str(&format!(
+            "## Strategic Objective: {} (ID: {})\n",
+            objective.title, objective.id
+        ));
         prompt.push_str(&format!("Description: {}\n", objective.description));
         prompt.push_str(&format!("Timeframe: {} months\n", objective.timeframe));
 
@@ -830,7 +874,10 @@ impl StrategicPlanningManager {
     }
 
     /// Generate fallback milestones for an objective
-    fn generate_fallback_milestones(&self, objective: &StrategicObjective) -> Result<Vec<Milestone>> {
+    fn generate_fallback_milestones(
+        &self,
+        objective: &StrategicObjective,
+    ) -> Result<Vec<Milestone>> {
         let milestone_count = 3; // Typically 3-5 milestones per objective
         let mut milestones = Vec::new();
 
@@ -846,7 +893,8 @@ impl StrategicPlanningManager {
 
             let milestone_id = format!("{}-m{}", objective.id, i);
             let milestone_title = format!("Milestone {} for {}", i, objective.title);
-            let milestone_desc = format!("Achieve {}% of the objective: {}",
+            let milestone_desc = format!(
+                "Achieve {}% of the objective: {}",
                 (percentage * 100.0) as u8,
                 objective.description
             );
@@ -860,7 +908,8 @@ impl StrategicPlanningManager {
             );
 
             // Add success criteria based on key results
-            let success_criteria = objective.key_results
+            let success_criteria = objective
+                .key_results
                 .iter()
                 .map(|kr| format!("Progress toward: {}", kr))
                 .collect();
@@ -869,7 +918,7 @@ impl StrategicPlanningManager {
 
             // Add dependency on previous milestone
             if i > 1 {
-                let prev_milestone_id = format!("{}-m{}", objective.id, i-1);
+                let prev_milestone_id = format!("{}-m{}", objective.id, i - 1);
                 milestone.dependencies.push(prev_milestone_id);
             }
 
@@ -880,9 +929,15 @@ impl StrategicPlanningManager {
     }
 
     /// Generate tactical goals from a milestone using LLM
-    pub async fn generate_goals_for_milestone(&self, milestone: &Milestone) -> Result<Vec<OptimizationGoal>> {
+    pub async fn generate_goals_for_milestone(
+        &self,
+        milestone: &Milestone,
+    ) -> Result<Vec<OptimizationGoal>> {
         // Instead of generating simulated goals, use the LLM for generation
-        info!("Generating tactical goals for milestone {} using LLM", milestone.id);
+        info!(
+            "Generating tactical goals for milestone {} using LLM",
+            milestone.id
+        );
 
         // In a real implementation, this would use the LLM to generate tactical goals
         // For now, we'll still create the same structured data but indicate it would use LLM
@@ -898,7 +953,10 @@ impl StrategicPlanningManager {
         for i in 1..=goal_count {
             let goal_id = format!("{}-g{}", milestone.id, i);
             let goal_title = format!("Goal {} for {}", i, milestone.title);
-            let goal_desc = format!("Implement functionality to support: {}", milestone.description);
+            let goal_desc = format!(
+                "Implement functionality to support: {}",
+                milestone.description
+            );
 
             // Select a category based on milestone content
             let category = if milestone.title.contains("performance") {
@@ -911,16 +969,13 @@ impl StrategicPlanningManager {
                 OptimizationCategory::General
             };
 
-            let mut goal = OptimizationGoal::new(
-                &goal_id,
-                &goal_title,
-                &goal_desc
-            );
+            let mut goal = OptimizationGoal::new(&goal_id, &goal_title, &goal_desc);
 
             goal.category = category;
 
             // Add success metrics based on milestone criteria
-            let success_metrics = milestone.success_criteria
+            let success_metrics = milestone
+                .success_criteria
                 .iter()
                 .map(|sc| format!("Contribute to: {}", sc))
                 .collect();
@@ -928,12 +983,20 @@ impl StrategicPlanningManager {
             goal.success_metrics = success_metrics;
 
             // Set priority based on urgency
-            let urgency = if i == 1 { "critical" } else if i == 2 { "high" } else if i == 3 { "medium" } else { "low" };
+            let urgency = if i == 1 {
+                "critical"
+            } else if i == 2 {
+                "high"
+            } else if i == 3 {
+                "medium"
+            } else {
+                "low"
+            };
             let priority = match urgency {
                 "critical" => u8::from(PriorityLevel::Critical),
                 "high" => u8::from(PriorityLevel::High),
                 "medium" => u8::from(PriorityLevel::Medium),
-                _ => u8::from(PriorityLevel::Low)
+                _ => u8::from(PriorityLevel::Low),
             };
 
             goal.priority = priority;
@@ -954,8 +1017,7 @@ impl StrategicPlanningManager {
             let related_goals: Vec<&OptimizationGoal> = all_goals
                 .iter()
                 .filter(|g| {
-                    g.id.starts_with(&milestone.id) ||
-                    g.description.contains(&milestone.title)
+                    g.id.starts_with(&milestone.id) || g.description.contains(&milestone.title)
                 })
                 .collect();
 
@@ -977,24 +1039,33 @@ impl StrategicPlanningManager {
         let now = Utc::now();
 
         for milestone in &mut self.plan.milestones {
-            if milestone.status != MilestoneStatus::Achieved &&
-               milestone.status != MilestoneStatus::Abandoned &&
-               milestone.status != MilestoneStatus::Superseded {
-
+            if milestone.status != MilestoneStatus::Achieved
+                && milestone.status != MilestoneStatus::Abandoned
+                && milestone.status != MilestoneStatus::Superseded
+            {
                 // If milestone is past due
                 if milestone.target_date < now {
                     if milestone.progress > 80 {
                         // Almost complete, extend deadline
                         milestone.target_date = now + chrono::Duration::days(30);
-                        info!("Extended deadline for milestone {} as it's almost complete", milestone.id);
+                        info!(
+                            "Extended deadline for milestone {} as it's almost complete",
+                            milestone.id
+                        );
                     } else if milestone.progress < 20 {
                         // Barely started, consider abandoning
                         milestone.status = MilestoneStatus::Abandoned;
-                        info!("Abandoned milestone {} as it's past due with little progress", milestone.id);
+                        info!(
+                            "Abandoned milestone {} as it's past due with little progress",
+                            milestone.id
+                        );
                     } else {
                         // In progress but behind schedule, adjust target
                         milestone.target_date = now + chrono::Duration::days(60);
-                        info!("Adjusted target date for milestone {} as it's behind schedule", milestone.id);
+                        info!(
+                            "Adjusted target date for milestone {} as it's behind schedule",
+                            milestone.id
+                        );
                     }
                 }
             }
@@ -1006,7 +1077,8 @@ impl StrategicPlanningManager {
     /// Prioritize tactical goals based on milestone dependencies and dates
     fn prioritize_tactical_goals(&self, goals: &mut [OptimizationGoal]) {
         // Extract milestone information first to avoid borrowing issues
-        let milestone_info: Vec<(String, Option<DateTime<Utc>>, Vec<String>)> = goals.iter()
+        let milestone_info: Vec<(String, Option<DateTime<Utc>>, Vec<String>)> = goals
+            .iter()
             .map(|goal| {
                 let milestone_id = goal.id.split('-').next().unwrap_or("").to_string();
                 let milestone = self.plan.milestones.iter().find(|m| m.id == milestone_id);
@@ -1037,7 +1109,7 @@ impl StrategicPlanningManager {
             // Otherwise, sort by target date
             match (a_info.1, b_info.1) {
                 (Some(a_date), Some(b_date)) => a_date.cmp(&b_date),
-                _ => goals[b_idx].priority.cmp(&goals[a_idx].priority) // Fallback to priority
+                _ => goals[b_idx].priority.cmp(&goals[a_idx].priority), // Fallback to priority
             }
         });
 
@@ -1062,10 +1134,14 @@ impl StrategicPlanningManager {
     /// Establish dependencies between tactical goals based on milestone dependencies
     fn establish_goal_dependencies(&self, goals: &mut Vec<OptimizationGoal>) {
         // First, collect all the milestone dependencies and goal IDs
-        let milestone_deps: Vec<(String, Vec<String>)> = goals.iter()
+        let milestone_deps: Vec<(String, Vec<String>)> = goals
+            .iter()
             .map(|goal| {
                 let milestone_id = goal.id.split('-').next().unwrap_or("").to_string();
-                let deps = self.plan.milestones.iter()
+                let deps = self
+                    .plan
+                    .milestones
+                    .iter()
                     .find(|m| m.id == milestone_id)
                     .map(|m| m.dependencies.clone())
                     .unwrap_or_default();
@@ -1083,7 +1159,8 @@ impl StrategicPlanningManager {
             let milestone_id = goals[i].id.split('-').next().unwrap_or("");
 
             // Find the milestone dependencies for this goal
-            let deps = milestone_deps.iter()
+            let deps = milestone_deps
+                .iter()
                 .find(|(id, _)| id == milestone_id)
                 .map(|(_, deps)| deps.clone())
                 .unwrap_or_default();
@@ -1140,7 +1217,8 @@ impl StrategicPlanningManager {
 
         // 4. Generate milestones for any objectives without them
         // Clone the objectives first to avoid borrow checker issues
-        let objectives_to_process: Vec<StrategicObjective> = self.plan.objectives.iter().cloned().collect();
+        let objectives_to_process: Vec<StrategicObjective> =
+            self.plan.objectives.iter().cloned().collect();
 
         for objective in &objectives_to_process {
             let existing_milestones = self.plan.get_milestones_for_objective(&objective.id);
@@ -1164,7 +1242,8 @@ impl StrategicPlanningManager {
         let mut opt_manager = self.optimization_manager.lock().await;
 
         // Only add goals that don't already exist
-        let existing_goal_ids: Vec<String> = opt_manager.get_all_goals()
+        let existing_goal_ids: Vec<String> = opt_manager
+            .get_all_goals()
             .iter()
             .map(|g| g.id.clone())
             .collect();
@@ -1196,18 +1275,23 @@ impl StrategicPlanningManager {
 
         // Add objectives
         for objective in &self.plan.objectives {
-            output.push_str(&format!("## Objective: {} ({}%)\n", objective.title, objective.progress));
+            output.push_str(&format!(
+                "## Objective: {} ({}%)\n",
+                objective.title, objective.progress
+            ));
             output.push_str(&format!("   {}\n\n", objective.description));
 
             // Add milestones for this objective
             let milestones = self.plan.get_milestones_for_objective(&objective.id);
             for milestone in milestones {
-                output.push_str(&format!("### Milestone: {} ({}%, {})\n",
-                    milestone.title,
-                    milestone.progress,
-                    milestone.status
+                output.push_str(&format!(
+                    "### Milestone: {} ({}%, {})\n",
+                    milestone.title, milestone.progress, milestone.status
                 ));
-                output.push_str(&format!("    Target: {}\n", milestone.target_date.format("%Y-%m-%d")));
+                output.push_str(&format!(
+                    "    Target: {}\n",
+                    milestone.target_date.format("%Y-%m-%d")
+                ));
                 output.push_str(&format!("    {}\n\n", milestone.description));
 
                 // In a real implementation, we would add tactical goals here
@@ -1224,47 +1308,79 @@ impl StrategicPlanningManager {
         let mut output = String::new();
 
         output.push_str("# Strategic Planning Progress Report\n\n");
-        output.push_str(&format!("Generated: {}\n\n", Utc::now().format("%Y-%m-%d %H:%M:%S")));
+        output.push_str(&format!(
+            "Generated: {}\n\n",
+            Utc::now().format("%Y-%m-%d %H:%M:%S")
+        ));
 
         // Overall progress
         output.push_str("## Overall Progress\n\n");
 
         let total_objectives = self.plan.objectives.len();
-        let completed_objectives = self.plan.objectives.iter()
+        let completed_objectives = self
+            .plan
+            .objectives
+            .iter()
             .filter(|o| o.progress >= 100)
             .count();
 
         let total_milestones = self.plan.milestones.len();
-        let completed_milestones = self.plan.milestones.iter()
+        let completed_milestones = self
+            .plan
+            .milestones
+            .iter()
             .filter(|m| m.status == MilestoneStatus::Achieved)
             .count();
 
-        output.push_str(&format!("- Objectives: {}/{} completed ({}%)\n",
+        output.push_str(&format!(
+            "- Objectives: {}/{} completed ({}%)\n",
             completed_objectives,
             total_objectives,
-            if total_objectives > 0 { completed_objectives * 100 / total_objectives } else { 0 }
+            if total_objectives > 0 {
+                completed_objectives * 100 / total_objectives
+            } else {
+                0
+            }
         ));
 
-        output.push_str(&format!("- Milestones: {}/{} achieved ({}%)\n\n",
+        output.push_str(&format!(
+            "- Milestones: {}/{} achieved ({}%)\n\n",
             completed_milestones,
             total_milestones,
-            if total_milestones > 0 { completed_milestones * 100 / total_milestones } else { 0 }
+            if total_milestones > 0 {
+                completed_milestones * 100 / total_milestones
+            } else {
+                0
+            }
         ));
 
         // Objective status
         output.push_str("## Objective Status\n\n");
 
         for objective in &self.plan.objectives {
-            output.push_str(&format!("### {} ({}%)\n", objective.title, objective.progress));
+            output.push_str(&format!(
+                "### {} ({}%)\n",
+                objective.title, objective.progress
+            ));
 
             // Milestones progress for this objective
             let milestones = self.plan.get_milestones_for_objective(&objective.id);
 
-            let achieved = milestones.iter().filter(|m| m.status == MilestoneStatus::Achieved).count();
-            let in_progress = milestones.iter().filter(|m| m.status == MilestoneStatus::InProgress).count();
-            let planned = milestones.iter().filter(|m| m.status == MilestoneStatus::Planned).count();
+            let achieved = milestones
+                .iter()
+                .filter(|m| m.status == MilestoneStatus::Achieved)
+                .count();
+            let in_progress = milestones
+                .iter()
+                .filter(|m| m.status == MilestoneStatus::InProgress)
+                .count();
+            let planned = milestones
+                .iter()
+                .filter(|m| m.status == MilestoneStatus::Planned)
+                .count();
 
-            output.push_str(&format!("- Milestones: {} achieved, {} in progress, {} planned\n",
+            output.push_str(&format!(
+                "- Milestones: {} achieved, {} in progress, {} planned\n",
                 achieved, in_progress, planned
             ));
 
@@ -1290,13 +1406,16 @@ impl StrategicPlanningManager {
         output.push_str("## Upcoming Deadlines\n\n");
 
         let now = Utc::now();
-        let upcoming_milestones: Vec<&Milestone> = self.plan.milestones.iter()
+        let upcoming_milestones: Vec<&Milestone> = self
+            .plan
+            .milestones
+            .iter()
             .filter(|m| {
-                m.status != MilestoneStatus::Achieved &&
-                m.status != MilestoneStatus::Abandoned &&
-                m.status != MilestoneStatus::Superseded &&
-                m.target_date > now &&
-                m.target_date < now + chrono::Duration::days(90)
+                m.status != MilestoneStatus::Achieved
+                    && m.status != MilestoneStatus::Abandoned
+                    && m.status != MilestoneStatus::Superseded
+                    && m.target_date > now
+                    && m.target_date < now + chrono::Duration::days(90)
             })
             .collect();
 
@@ -1305,7 +1424,8 @@ impl StrategicPlanningManager {
         } else {
             for milestone in upcoming_milestones {
                 let days = milestone.target_date.signed_duration_since(now).num_days();
-                output.push_str(&format!("- {} due in {} days ({})\n",
+                output.push_str(&format!(
+                    "- {} due in {} days ({})\n",
                     milestone.title,
                     days,
                     milestone.target_date.format("%Y-%m-%d")

@@ -1,23 +1,22 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use log::info;
-use std::sync::Arc;
-use std::path::PathBuf;
-use uuid::Uuid;
 use regex::Regex;
-use tokio::sync::Mutex;
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use uuid::Uuid;
 
 use crate::code_generation::generator::{CodeContext, CodeGenerator, CodeImprovement, FileChange};
 use crate::code_generation::llm::{LlmFactory, LlmProvider};
-use crate::code_generation::prompt::PromptManager;
 use crate::code_generation::llm_tool::{
-    LlmTool, ToolCall, ToolResult, ToolRegistry,
-    CodeSearchTool, FileContentsTool, FindTestsTool,
-    DirectoryExplorationTool, GitHistoryTool, CompilationFeedbackTool,
-    CreateFileTool, ModifyFileTool, GitCommandTool
+    CodeSearchTool, CompilationFeedbackTool, CreateFileTool, DirectoryExplorationTool,
+    FileContentsTool, FindTestsTool, GitCommandTool, GitHistoryTool, LlmTool, ModifyFileTool,
+    ToolCall, ToolRegistry, ToolResult,
 };
-use crate::core::config::{LlmConfig, CodeGenerationConfig, LlmLoggingConfig};
+use crate::code_generation::prompt::PromptManager;
+use crate::core::config::{CodeGenerationConfig, LlmConfig, LlmLoggingConfig};
 use crate::version_control::git::GitManager;
 
 /// A code generator that uses LLM to generate code improvements
@@ -46,7 +45,13 @@ pub struct LlmCodeGenerator {
 
 impl LlmCodeGenerator {
     /// Create a new LLM code generator
-    pub fn new(llm_config: LlmConfig, code_gen_config: CodeGenerationConfig, llm_logging_config: LlmLoggingConfig, git_manager: Arc<Mutex<dyn GitManager>>, workspace: PathBuf) -> Result<Self> {
+    pub fn new(
+        llm_config: LlmConfig,
+        code_gen_config: CodeGenerationConfig,
+        llm_logging_config: LlmLoggingConfig,
+        git_manager: Arc<Mutex<dyn GitManager>>,
+        workspace: PathBuf,
+    ) -> Result<Self> {
         let llm = LlmFactory::create(llm_config, llm_logging_config)
             .context("Failed to create LLM provider")?;
 
@@ -60,11 +65,17 @@ impl LlmCodeGenerator {
         let mut tool_registry = ToolRegistry::new();
 
         // Register available tools
-        tool_registry.register(CodeSearchTool::new(workspace.clone(), Arc::clone(&git_manager)));
+        tool_registry.register(CodeSearchTool::new(
+            workspace.clone(),
+            Arc::clone(&git_manager),
+        ));
         tool_registry.register(FileContentsTool::new(workspace.clone()));
         tool_registry.register(FindTestsTool::new(workspace.clone()));
         tool_registry.register(DirectoryExplorationTool::new(workspace.clone()));
-        tool_registry.register(GitHistoryTool::new(workspace.clone(), Arc::clone(&git_manager)));
+        tool_registry.register(GitHistoryTool::new(
+            workspace.clone(),
+            Arc::clone(&git_manager),
+        ));
         tool_registry.register(CompilationFeedbackTool::new(workspace.clone()));
         tool_registry.register(CreateFileTool::new(workspace.clone()));
         tool_registry.register(ModifyFileTool::new(workspace.clone()));
@@ -100,7 +111,10 @@ impl LlmCodeGenerator {
 
             // Look for the last file path mention before this code block
             if let Some(file_cap) = file_re.captures_iter(pre_code).last() {
-                file_path = file_cap.get(1).or(file_cap.get(2)).or(file_cap.get(3))
+                file_path = file_cap
+                    .get(1)
+                    .or(file_cap.get(2))
+                    .or(file_cap.get(3))
                     .map(|m| m.as_str().to_string())
                     .unwrap_or_default();
             }
@@ -121,7 +135,10 @@ impl LlmCodeGenerator {
         if changes.is_empty() {
             // If no code blocks found, try to look for file path mentions anyway
             for cap in file_re.captures_iter(response) {
-                let file_path = cap.get(1).or(cap.get(2)).or(cap.get(3))
+                let file_path = cap
+                    .get(1)
+                    .or(cap.get(2))
+                    .or(cap.get(3))
                     .map(|m| m.as_str().to_string())
                     .unwrap_or_default();
                 if !file_path.is_empty() {
@@ -145,7 +162,10 @@ impl LlmCodeGenerator {
             Ok(content) => Ok(content),
             Err(e) => {
                 info!("Failed to read file {}: {}", file_path, e);
-                Ok(format!("// File {} does not exist or cannot be read", file_path))
+                Ok(format!(
+                    "// File {} does not exist or cannot be read",
+                    file_path
+                ))
             }
         }
     }
@@ -176,7 +196,8 @@ impl LlmCodeGenerator {
             let args_text = cap[2].trim();
 
             // Simple parsing of comma-separated arguments
-            let args = args_text.split(',')
+            let args = args_text
+                .split(',')
                 .map(|s| s.trim().trim_matches(|c| c == '\'' || c == '"').to_string())
                 .collect();
 
@@ -204,7 +225,11 @@ impl LlmCodeGenerator {
             if !params.is_empty() {
                 tool_descriptions.push_str("  Parameters:\n");
                 for param in params {
-                    let required_str = if param.required { "required" } else { "optional" };
+                    let required_str = if param.required {
+                        "required"
+                    } else {
+                        "optional"
+                    };
                     let default_str = if let Some(default) = &param.default_value {
                         format!(" (default: {})", default)
                     } else {
@@ -213,10 +238,7 @@ impl LlmCodeGenerator {
 
                     tool_descriptions.push_str(&format!(
                         "    - {}: {} [{}]{}\n",
-                        param.name,
-                        param.description,
-                        required_str,
-                        default_str
+                        param.name, param.description, required_str, default_str
                     ));
                 }
             }
@@ -242,7 +264,10 @@ impl LlmCodeGenerator {
 
         // Task description
         let task = if let Some(requirements) = &context.requirements {
-            format!("## Task:\n{}\n\n## Requirements:\n{}\n\n", context.task, requirements)
+            format!(
+                "## Task:\n{}\n\n## Requirements:\n{}\n\n",
+                context.task, requirements
+            )
         } else {
             format!("## Task:\n{}\n\n", context.task)
         };
@@ -282,10 +307,17 @@ impl LlmCodeGenerator {
 
         // Iterative conversation with tool usage
         for iteration in 0..self.max_tool_iterations {
-            info!("Tool iteration {}/{}", iteration + 1, self.max_tool_iterations);
+            info!(
+                "Tool iteration {}/{}",
+                iteration + 1,
+                self.max_tool_iterations
+            );
 
             // Generate a response
-            let response = self.llm.generate(&conversation, Some(2048), Some(0.4)).await?;
+            let response = self
+                .llm
+                .generate(&conversation, Some(2048), Some(0.4))
+                .await?;
 
             // Check if the response contains tool calls
             let tool_calls = self.extract_tool_calls(&response);
@@ -301,21 +333,28 @@ impl LlmCodeGenerator {
 
             // Process each tool call in sequence
             for tool_call in tool_calls {
-                info!("Tool call detected: {} with {} args", tool_call.tool, tool_call.args.len());
+                info!(
+                    "Tool call detected: {} with {} args",
+                    tool_call.tool,
+                    tool_call.args.len()
+                );
 
                 // Execute the tool
                 let tool_result = self.tool_registry.execute(&tool_call).await;
 
                 // Add the result to the conversation
                 if tool_result.success {
-                    conversation.push_str(&format!("Tool result for {}:\n{}\n\n",
-                        tool_call.tool,
-                        tool_result.result
+                    conversation.push_str(&format!(
+                        "Tool result for {}:\n{}\n\n",
+                        tool_call.tool, tool_result.result
                     ));
                 } else {
-                    conversation.push_str(&format!("Tool error for {}: {}\n\n",
+                    conversation.push_str(&format!(
+                        "Tool error for {}: {}\n\n",
                         tool_call.tool,
-                        tool_result.error.unwrap_or_else(|| "Unknown error".to_string())
+                        tool_result
+                            .error
+                            .unwrap_or_else(|| "Unknown error".to_string())
                     ));
                 }
             }
@@ -329,7 +368,10 @@ impl LlmCodeGenerator {
             );
 
             // Generate one more time to get a final response
-            final_response = self.llm.generate(&(conversation + &final_response), Some(4096), Some(0.4)).await?;
+            final_response = self
+                .llm
+                .generate(&(conversation + &final_response), Some(4096), Some(0.4))
+                .await?;
         }
 
         Ok(final_response)
@@ -393,11 +435,12 @@ impl LlmCodeGenerator {
 
     /// Process a prompt with tools
     async fn process_with_tools(&self, prompt: &str) -> Result<String> {
-        info!("Processing prompt with tools, prompt length: {}", prompt.len());
+        info!(
+            "Processing prompt with tools, prompt length: {}",
+            prompt.len()
+        );
 
-        let mut conversation = vec![
-            ("system", prompt.to_string()),
-        ];
+        let mut conversation = vec![("system", prompt.to_string())];
 
         let mut iterations = 0;
 
@@ -407,7 +450,10 @@ impl LlmCodeGenerator {
             info!("Tool iteration {}/{}", iterations, self.max_tool_iterations);
 
             // Generate the next message from the LLM
-            let llm_response = self.llm.generate(&conversation[0].1, Some(4096), Some(0.5)).await?;
+            let llm_response = self
+                .llm
+                .generate(&conversation[0].1, Some(4096), Some(0.5))
+                .await?;
 
             // Look for tool calls in the response
             let tool_calls = self.tool_registry.extract_tool_calls(&llm_response);
@@ -432,7 +478,8 @@ impl LlmCodeGenerator {
                 let result = match self.tool_registry.execute_tool(&tool_call).await {
                     Ok(result) => result,
                     Err(e) => {
-                        let error_message = format!("Error executing tool {}: {}", tool_call.tool, e);
+                        let error_message =
+                            format!("Error executing tool {}: {}", tool_call.tool, e);
                         info!("{}", error_message);
                         ToolResult {
                             success: false,
@@ -443,10 +490,16 @@ impl LlmCodeGenerator {
                 };
 
                 let result_message = if result.success {
-                    format!("Tool '{}' execution succeeded:\n{}", tool_call.tool, result.result)
+                    format!(
+                        "Tool '{}' execution succeeded:\n{}",
+                        tool_call.tool, result.result
+                    )
                 } else {
-                    format!("Tool '{}' execution failed:\n{}", tool_call.tool,
-                            result.error.unwrap_or_else(|| "Unknown error".to_string()))
+                    format!(
+                        "Tool '{}' execution failed:\n{}",
+                        tool_call.tool,
+                        result.error.unwrap_or_else(|| "Unknown error".to_string())
+                    )
                 };
 
                 all_results.push_str(&result_message);
@@ -457,7 +510,10 @@ impl LlmCodeGenerator {
             conversation.push(("user", all_results));
         }
 
-        info!("Reached maximum tool iterations ({}), returning final response", self.max_tool_iterations);
+        info!(
+            "Reached maximum tool iterations ({}), returning final response",
+            self.max_tool_iterations
+        );
 
         // Get the last assistant message as the final response
         for (role, message) in conversation.iter().rev() {
@@ -467,8 +523,14 @@ impl LlmCodeGenerator {
         }
 
         // If no assistant message found, generate a final response
-        let final_prompt = format!("{}\n\nPlease provide your final response based on the conversation above.", prompt);
-        let final_response = self.llm.generate(&final_prompt, Some(4096), Some(0.5)).await?;
+        let final_prompt = format!(
+            "{}\n\nPlease provide your final response based on the conversation above.",
+            prompt
+        );
+        let final_response = self
+            .llm
+            .generate(&final_prompt, Some(4096), Some(0.5))
+            .await?;
 
         Ok(final_response)
     }
@@ -488,13 +550,21 @@ impl LlmCodeGenerator {
             Ok(response)
         } else {
             // Direct LLM call without tools
-            let response = self.llm.generate(&full_prompt, Some(4096), Some(0.5)).await?;
+            let response = self
+                .llm
+                .generate(&full_prompt, Some(4096), Some(0.5))
+                .await?;
             Ok(response)
         }
     }
 
     /// Generate a commit message based on code changes
-    pub async fn create_commit_message(&self, improvement: &CodeImprovement, goal_id: &str, branch_name: &str) -> Result<String> {
+    pub async fn create_commit_message(
+        &self,
+        improvement: &CodeImprovement,
+        goal_id: &str,
+        branch_name: &str,
+    ) -> Result<String> {
         let prompt = self.prompt_manager.create_system_message();
 
         // Build a list of changed files
@@ -526,7 +596,10 @@ impl LlmCodeGenerator {
         let full_prompt = format!("{}\n\n{}", prompt, query);
 
         // Direct LLM call for commit message
-        let response = self.llm.generate(&full_prompt, Some(1024), Some(0.4)).await?;
+        let response = self
+            .llm
+            .generate(&full_prompt, Some(1024), Some(0.4))
+            .await?;
 
         // Extract just the commit message (removing any explanations the LLM might add)
         let commit_message = if response.contains("```") {
@@ -545,7 +618,12 @@ impl LlmCodeGenerator {
     }
 
     /// Handle git merge operations
-    pub async fn process_merge_operation(&self, branch_name: &str, target_branch: &str, summary: &str) -> Result<String> {
+    pub async fn process_merge_operation(
+        &self,
+        branch_name: &str,
+        target_branch: &str,
+        summary: &str,
+    ) -> Result<String> {
         let prompt = self.prompt_manager.create_system_message();
 
         // Create a description for the merge operation
@@ -559,9 +637,7 @@ impl LlmCodeGenerator {
             3. What should the merge commit message be?\n\
             4. Are there any post-merge steps that should be taken?\n\
             5. Should the source branch be deleted after merging?",
-            branch_name,
-            target_branch,
-            summary
+            branch_name, target_branch, summary
         );
 
         // Combine the prompt with the query
@@ -594,31 +670,52 @@ impl CodeGenerator for LlmCodeGenerator {
             info!("Using standard approach for code generation");
 
             // Fetch content of all relevant files
-            let current_code = self.fetch_code_content(&context.file_paths.first().unwrap()).await?;
+            let current_code = self
+                .fetch_code_content(&context.file_paths.first().unwrap())
+                .await?;
 
             // Determine the appropriate prompt type based on the task description
-            let prompt = if context.task.to_lowercase().contains("bug") || context.task.to_lowercase().contains("fix") {
+            let prompt = if context.task.to_lowercase().contains("bug")
+                || context.task.to_lowercase().contains("fix")
+            {
                 info!("Using bugfix prompt for task: {}", context.task);
-                self.prompt_manager.create_bugfix_prompt(context, &current_code)
-            } else if context.task.to_lowercase().contains("feature") || context.task.to_lowercase().contains("implement") || context.task.to_lowercase().contains("add") {
+                self.prompt_manager
+                    .create_bugfix_prompt(context, &current_code)
+            } else if context.task.to_lowercase().contains("feature")
+                || context.task.to_lowercase().contains("implement")
+                || context.task.to_lowercase().contains("add")
+            {
                 info!("Using feature prompt for task: {}", context.task);
-                self.prompt_manager.create_feature_prompt(context, &current_code)
-            } else if context.task.to_lowercase().contains("refactor") || context.task.to_lowercase().contains("restructure") || context.task.to_lowercase().contains("simplify") {
+                self.prompt_manager
+                    .create_feature_prompt(context, &current_code)
+            } else if context.task.to_lowercase().contains("refactor")
+                || context.task.to_lowercase().contains("restructure")
+                || context.task.to_lowercase().contains("simplify")
+            {
                 info!("Using refactor prompt for task: {}", context.task);
-                self.prompt_manager.create_refactor_prompt(context, &current_code)
+                self.prompt_manager
+                    .create_refactor_prompt(context, &current_code)
             } else {
-                info!("Using general improvement prompt for task: {}", context.task);
-                self.prompt_manager.create_improvement_prompt(context, &current_code)
+                info!(
+                    "Using general improvement prompt for task: {}",
+                    context.task
+                );
+                self.prompt_manager
+                    .create_improvement_prompt(context, &current_code)
             };
 
             info!("Generated prompt with length: {} characters", prompt.len());
 
             // Ask the LLM with appropriate parameters based on the task
             let max_tokens = Some(4096); // Increased token limit for more detailed responses
-            let temperature = if context.task.to_lowercase().contains("bug") || context.task.to_lowercase().contains("fix") {
+            let temperature = if context.task.to_lowercase().contains("bug")
+                || context.task.to_lowercase().contains("fix")
+            {
                 // Lower temperature for bug fixes to get more deterministic outputs
                 Some(0.2)
-            } else if context.task.to_lowercase().contains("feature") || context.task.to_lowercase().contains("innovative") {
+            } else if context.task.to_lowercase().contains("feature")
+                || context.task.to_lowercase().contains("innovative")
+            {
                 // Higher temperature for features to encourage creativity
                 Some(0.7)
             } else {
@@ -654,16 +751,19 @@ impl CodeGenerator for LlmCodeGenerator {
         Ok(improvement)
     }
 
-    async fn provide_feedback(&self, improvement: &CodeImprovement, success: bool, feedback: &str) -> Result<()> {
+    async fn provide_feedback(
+        &self,
+        improvement: &CodeImprovement,
+        success: bool,
+        feedback: &str,
+    ) -> Result<()> {
         // This is a simple implementation
         // In a real system, we might store this feedback for future reference
         // or use it to fine-tune the LLM
 
         info!(
             "Feedback for improvement {}: Success={}, Feedback={}",
-            improvement.id,
-            success,
-            feedback
+            improvement.id, success, feedback
         );
 
         // We could also log this to a database or send it to a feedback API
@@ -677,12 +777,24 @@ impl CodeGenerator for LlmCodeGenerator {
     }
 
     /// Generate a git commit message based on code changes
-    async fn generate_commit_message(&self, improvement: &CodeImprovement, goal_id: &str, branch_name: &str) -> Result<String> {
-        self.create_commit_message(improvement, goal_id, branch_name).await
+    async fn generate_commit_message(
+        &self,
+        improvement: &CodeImprovement,
+        goal_id: &str,
+        branch_name: &str,
+    ) -> Result<String> {
+        self.create_commit_message(improvement, goal_id, branch_name)
+            .await
     }
 
     /// Handle git merge operations
-    async fn handle_merge_operation(&self, branch_name: &str, target_branch: &str, summary: &str) -> Result<String> {
-        self.process_merge_operation(branch_name, target_branch, summary).await
+    async fn handle_merge_operation(
+        &self,
+        branch_name: &str,
+        target_branch: &str,
+        summary: &str,
+    ) -> Result<String> {
+        self.process_merge_operation(branch_name, target_branch, summary)
+            .await
     }
 }

@@ -1,9 +1,9 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use log::{warn, info};
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
-use sysinfo::{System, SystemExt, ProcessExt};
+use sysinfo::{ProcessExt, System, SystemExt};
 
 use crate::core::error::BorgError;
 
@@ -115,9 +115,11 @@ impl SystemResourceMonitor {
 #[async_trait]
 impl ResourceMonitor for SystemResourceMonitor {
     async fn get_resource_usage(&self) -> Result<ResourceUsage> {
-        let process = self.get_process().ok_or_else(|| anyhow::anyhow!(BorgError::ResourceLimitError(
-            "Failed to get process information".to_string()
-        )))?;
+        let process = self.get_process().ok_or_else(|| {
+            anyhow::anyhow!(BorgError::ResourceLimitError(
+                "Failed to get process information".to_string()
+            ))
+        })?;
 
         let memory_mb = process.memory() as f64 / 1024.0 / 1024.0;
         let cpu_percent = process.cpu_usage() as f64;
@@ -127,7 +129,10 @@ impl ResourceMonitor for SystemResourceMonitor {
         let is_critical = memory_mb > self.peak_memory_mb * 1.5 || cpu_percent > 95.0;
 
         if is_critical {
-            warn!("Critical resource usage detected: memory={:.2}MB, CPU={:.2}%", memory_mb, cpu_percent);
+            warn!(
+                "Critical resource usage detected: memory={:.2}MB, CPU={:.2}%",
+                memory_mb, cpu_percent
+            );
         }
 
         Ok(ResourceUsage {
@@ -156,8 +161,10 @@ impl ResourceMonitor for SystemResourceMonitor {
         if !all_within_limits {
             warn!(
                 "Resource limits exceeded: memory={:.2}/{:.2}MB, CPU={:.2}/{:.2}%",
-                usage.memory_usage_mb, limits.max_memory_mb,
-                usage.cpu_usage_percent, limits.max_cpu_percent
+                usage.memory_usage_mb,
+                limits.max_memory_mb,
+                usage.cpu_usage_percent,
+                limits.max_cpu_percent
             );
         }
 
@@ -174,7 +181,10 @@ impl ResourceMonitor for SystemResourceMonitor {
 
         // In a real implementation, this would start a background task to periodically check resources
         // For simplicity, we'll just log that monitoring has started
-        info!("Resource monitoring started with interval of {}ms", interval_ms);
+        info!(
+            "Resource monitoring started with interval of {}ms",
+            interval_ms
+        );
 
         Ok(())
     }

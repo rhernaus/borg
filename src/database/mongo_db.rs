@@ -1,14 +1,14 @@
 use std::marker::PhantomData;
 
+use futures_util::TryStreamExt;
 use log::info;
-use mongodb::{Client, Collection, Database};
 use mongodb::bson::doc;
 use mongodb::options::ClientOptions;
+use mongodb::{Client, Collection, Database};
 use serde::Deserialize;
-use futures_util::TryStreamExt;
 
-use super::models::{Entity, Record};
 use super::file_db::DatabaseError;
+use super::models::{Entity, Record};
 
 /// Result type for database operations
 pub type DbResult<T> = Result<T, DatabaseError>;
@@ -30,21 +30,32 @@ pub struct MongoDb<T: Entity + for<'a> Deserialize<'a> + Unpin> {
 
 impl<T: Entity + for<'a> Deserialize<'a> + Unpin> MongoDb<T> {
     /// Create a new MongoDB database
-    pub async fn new(connection_string: &str, database_name: &str, collection_name: &str) -> DbResult<Self> {
+    pub async fn new(
+        connection_string: &str,
+        database_name: &str,
+        collection_name: &str,
+    ) -> DbResult<Self> {
         // Parse connection string and create client options
-        let client_options = ClientOptions::parse(connection_string)
-            .await
-            .map_err(|e| DatabaseError::InternalError(format!("Failed to parse MongoDB connection string: {}", e)))?;
+        let client_options = ClientOptions::parse(connection_string).await.map_err(|e| {
+            DatabaseError::InternalError(format!(
+                "Failed to parse MongoDB connection string: {}",
+                e
+            ))
+        })?;
 
         // Create client
-        let client = Client::with_options(client_options)
-            .map_err(|e| DatabaseError::InternalError(format!("Failed to create MongoDB client: {}", e)))?;
+        let client = Client::with_options(client_options).map_err(|e| {
+            DatabaseError::InternalError(format!("Failed to create MongoDB client: {}", e))
+        })?;
 
         // Get database and collection
         let database = client.database(database_name);
         let collection = database.collection::<Record<T>>(collection_name);
 
-        info!("Connected to MongoDB database: {}, collection: {}", database_name, collection_name);
+        info!(
+            "Connected to MongoDB database: {}, collection: {}",
+            database_name, collection_name
+        );
 
         Ok(Self {
             client,
@@ -61,17 +72,23 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> MongoDb<T> {
         match self.collection.find_one(filter, None).await {
             Ok(Some(record)) => Ok(record),
             Ok(None) => Err(DatabaseError::NotFound(id.as_ref().to_string())),
-            Err(e) => Err(DatabaseError::InternalError(format!("MongoDB error: {}", e))),
+            Err(e) => Err(DatabaseError::InternalError(format!(
+                "MongoDB error: {}",
+                e
+            ))),
         }
     }
 
     /// Get all records
     pub async fn get_all(&self) -> DbResult<Vec<Record<T>>> {
-        let cursor = self.collection.find(None, None)
+        let cursor = self
+            .collection
+            .find(None, None)
             .await
             .map_err(|e| DatabaseError::InternalError(format!("MongoDB error: {}", e)))?;
 
-        let records = cursor.try_collect()
+        let records = cursor
+            .try_collect()
             .await
             .map_err(|e| DatabaseError::InternalError(format!("MongoDB error: {}", e)))?;
 
@@ -84,7 +101,9 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> MongoDb<T> {
 
         // Check if entity already exists
         let filter = doc! { "entity.id": id.as_ref() };
-        let exists = self.collection.find_one(filter.clone(), None)
+        let exists = self
+            .collection
+            .find_one(filter.clone(), None)
             .await
             .map_err(|e| DatabaseError::InternalError(format!("MongoDB error: {}", e)))?;
 
@@ -96,7 +115,8 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> MongoDb<T> {
         let record = Record::new(entity);
 
         // Insert into MongoDB
-        self.collection.insert_one(&record, None)
+        self.collection
+            .insert_one(&record, None)
             .await
             .map_err(|e| DatabaseError::InternalError(format!("MongoDB error: {}", e)))?;
 
@@ -111,7 +131,9 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> MongoDb<T> {
 
         // Find the existing record
         let filter = doc! { "entity.id": id.as_ref() };
-        let existing = self.collection.find_one(filter.clone(), None)
+        let existing = self
+            .collection
+            .find_one(filter.clone(), None)
             .await
             .map_err(|e| DatabaseError::InternalError(format!("MongoDB error: {}", e)))?;
 
@@ -135,9 +157,10 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> MongoDb<T> {
 
         // Update in MongoDB
         let update = doc! { "$set": mongodb::bson::to_document(&existing)
-            .map_err(|e| DatabaseError::InternalError(format!("MongoDB serialization error: {}", e)))? };
+        .map_err(|e| DatabaseError::InternalError(format!("MongoDB serialization error: {}", e)))? };
 
-        self.collection.update_one(filter, update, None)
+        self.collection
+            .update_one(filter, update, None)
             .await
             .map_err(|e| DatabaseError::InternalError(format!("MongoDB error: {}", e)))?;
 
@@ -150,7 +173,9 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> MongoDb<T> {
     pub async fn delete(&self, id: &T::Id) -> DbResult<()> {
         let filter = doc! { "entity.id": id.as_ref() };
 
-        let result = self.collection.delete_one(filter, None)
+        let result = self
+            .collection
+            .delete_one(filter, None)
             .await
             .map_err(|e| DatabaseError::InternalError(format!("MongoDB error: {}", e)))?;
 
@@ -165,7 +190,8 @@ impl<T: Entity + for<'a> Deserialize<'a> + Unpin> MongoDb<T> {
 
     /// Clear all records
     pub async fn clear(&self) -> DbResult<()> {
-        self.collection.delete_many(doc! {}, None)
+        self.collection
+            .delete_many(doc! {}, None)
             .await
             .map_err(|e| DatabaseError::InternalError(format!("MongoDB error: {}", e)))?;
 

@@ -1,14 +1,17 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use log::{warn, info};
-use std::time::{Duration, Instant};
-use sysinfo::{System, SystemExt, ProcessExt, CpuExt};
-use tokio;
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use log::{info, warn};
 use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::time::{Duration, Instant};
+use sysinfo::{CpuExt, ProcessExt, System, SystemExt};
+use tokio;
 
 use crate::core::error::BorgError;
-use crate::resource_monitor::monitor::{ResourceMonitor, ResourceUsage, ResourceLimits};
+use crate::resource_monitor::monitor::{ResourceLimits, ResourceMonitor, ResourceUsage};
 
 /// System resource monitor implementation
 pub struct SystemMonitor {
@@ -82,9 +85,11 @@ impl SystemMonitor {
 #[async_trait]
 impl ResourceMonitor for SystemMonitor {
     async fn get_resource_usage(&self) -> Result<ResourceUsage> {
-        let process = self.get_process().ok_or_else(|| anyhow::anyhow!(BorgError::ResourceLimitError(
-            "Failed to get process information".to_string()
-        )))?;
+        let process = self.get_process().ok_or_else(|| {
+            anyhow::anyhow!(BorgError::ResourceLimitError(
+                "Failed to get process information".to_string()
+            ))
+        })?;
 
         let memory_mb = process.memory() as f64 / 1024.0 / 1024.0;
         let cpu_percent = process.cpu_usage() as f64;
@@ -119,7 +124,10 @@ impl ResourceMonitor for SystemMonitor {
         let is_critical = (memory_mb > 500.0) || cpu_percent > 95.0;
 
         if is_critical {
-            warn!("Critical resource usage detected: memory={:.2}MB, CPU={:.2}%", memory_mb, cpu_percent);
+            warn!(
+                "Critical resource usage detected: memory={:.2}MB, CPU={:.2}%",
+                memory_mb, cpu_percent
+            );
         }
 
         Ok(ResourceUsage {
@@ -148,8 +156,10 @@ impl ResourceMonitor for SystemMonitor {
         if !all_within_limits {
             warn!(
                 "Resource limits exceeded: memory={:.2}/{:.2}MB, CPU={:.2}/{:.2}%",
-                usage.memory_usage_mb, limits.max_memory_mb,
-                usage.cpu_usage_percent, limits.max_cpu_percent
+                usage.memory_usage_mb,
+                limits.max_memory_mb,
+                usage.cpu_usage_percent,
+                limits.max_cpu_percent
             );
         }
 
@@ -173,7 +183,11 @@ impl ResourceMonitor for SystemMonitor {
         self.shared_peak_memory = Some(shared_peak_memory.clone());
 
         // Default to 500MB if peak memory is too low
-        let max_memory_mb = if self.peak_memory_mb < 100.0 { 500.0 } else { self.peak_memory_mb * 1.5 };
+        let max_memory_mb = if self.peak_memory_mb < 100.0 {
+            500.0
+        } else {
+            self.peak_memory_mb * 1.5
+        };
         // Always use 95% as max CPU percent (not tied to memory)
         let max_cpu_percent = 95.0;
         let interval = Duration::from_millis(interval_ms);
@@ -209,25 +223,32 @@ impl ResourceMonitor for SystemMonitor {
                 let cpu_usage = system.global_cpu_info().cpu_usage();
 
                 // Check if we're exceeding limits
-                let memory_exceeded = if max_memory_mb > 0.0 && used_memory_mb > max_memory_mb as u64 {
-                    warn!("Memory usage exceeded: {} MB (limit: {} MB)",
-                        used_memory_mb, max_memory_mb);
-                    true
-                } else {
-                    false
-                };
+                let memory_exceeded =
+                    if max_memory_mb > 0.0 && used_memory_mb > max_memory_mb as u64 {
+                        warn!(
+                            "Memory usage exceeded: {} MB (limit: {} MB)",
+                            used_memory_mb, max_memory_mb
+                        );
+                        true
+                    } else {
+                        false
+                    };
 
                 let cpu_exceeded = if max_cpu_percent > 0.0 && cpu_usage > max_cpu_percent as f32 {
-                    warn!("CPU usage exceeded: {:.1}% (limit: {}%)",
-                        cpu_usage, max_cpu_percent);
+                    warn!(
+                        "CPU usage exceeded: {:.1}% (limit: {}%)",
+                        cpu_usage, max_cpu_percent
+                    );
                     true
                 } else {
                     false
                 };
 
                 // Log current usage at info level
-                info!("Resource usage - Memory: {} MB, CPU: {:.1}%",
-                    used_memory_mb, cpu_usage);
+                info!(
+                    "Resource usage - Memory: {} MB, CPU: {:.1}%",
+                    used_memory_mb, cpu_usage
+                );
 
                 // If any resource is exceeded, log at warning level
                 if memory_exceeded || cpu_exceeded {
@@ -239,7 +260,10 @@ impl ResourceMonitor for SystemMonitor {
             info!("Resource monitoring task stopped");
         });
 
-        info!("Resource monitoring started with interval of {}ms", interval_ms);
+        info!(
+            "Resource monitoring started with interval of {}ms",
+            interval_ms
+        );
         Ok(())
     }
 

@@ -1,7 +1,7 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::hash::Hash;
-use chrono::{DateTime, Utc};
 
 /// Trait for database entity types
 ///

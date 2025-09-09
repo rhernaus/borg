@@ -1,15 +1,15 @@
-use async_trait::async_trait;
 use anyhow::{Context, Result};
-use serde::{Serialize, Deserialize};
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use std::process::Command;
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use async_trait::async_trait;
+use chrono;
 use log::{info, warn};
 use rand;
-use chrono;
 use regex;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use crate::version_control::git::GitManager;
 
@@ -153,22 +153,33 @@ impl LlmTool for CodeSearchTool {
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
                 if stdout.is_empty() {
-                    Ok(format!("No matches found for pattern '{}'{}",
+                    Ok(format!(
+                        "No matches found for pattern '{}'{}",
                         pattern,
-                        if let Some(fp) = file_pattern { format!(" in files matching '{}'", fp) } else { String::new() }
+                        if let Some(fp) = file_pattern {
+                            format!(" in files matching '{}'", fp)
+                        } else {
+                            String::new()
+                        }
                     ))
                 } else {
-                    Ok(format!("Search results for '{}'{}:\n{}",
+                    Ok(format!(
+                        "Search results for '{}'{}:\n{}",
                         pattern,
-                        if let Some(fp) = file_pattern { format!(" in files matching '{}'", fp) } else { String::new() },
+                        if let Some(fp) = file_pattern {
+                            format!(" in files matching '{}'", fp)
+                        } else {
+                            String::new()
+                        },
                         stdout
                     ))
                 }
-            },
+            }
             Err(e) => {
                 // Fall back to git grep if ripgrep isn't available
                 let mut git_cmd = Command::new("git");
-                git_cmd.current_dir(&self.workspace)
+                git_cmd
+                    .current_dir(&self.workspace)
                     .arg("grep")
                     .arg("-n") // line numbers
                     .arg(pattern);
@@ -181,8 +192,10 @@ impl LlmTool for CodeSearchTool {
                         } else {
                             Ok(format!("Search results for '{}':\n{}", pattern, git_stdout))
                         }
-                    },
-                    Err(_) => Err(anyhow::anyhow!("Failed to search code: ripgrep and git grep both unavailable"))
+                    }
+                    Err(_) => Err(anyhow::anyhow!(
+                        "Failed to search code: ripgrep and git grep both unavailable"
+                    )),
                 }
             }
         }
@@ -197,9 +210,7 @@ pub struct FileContentsTool {
 impl FileContentsTool {
     /// Create a new file contents tool
     pub fn new(workspace: PathBuf) -> Self {
-        Self {
-            workspace,
-        }
+        Self { workspace }
     }
 }
 
@@ -278,18 +289,26 @@ impl LlmTool for FileContentsTool {
             };
 
             if start_idx >= lines.len() {
-                return Err(anyhow::anyhow!("Start line {} is beyond the end of the file", start_line));
+                return Err(anyhow::anyhow!(
+                    "Start line {} is beyond the end of the file",
+                    start_line
+                ));
             }
 
             let slice = &lines[start_idx..end_idx];
-            Ok(format!("Contents of {} (lines {} to {}):\n\n{}",
+            Ok(format!(
+                "Contents of {} (lines {} to {}):\n\n{}",
                 file_path.display(),
                 start_line,
                 end_idx,
                 slice.join("\n")
             ))
         } else {
-            Ok(format!("Contents of {}:\n\n{}", file_path.display(), content))
+            Ok(format!(
+                "Contents of {}:\n\n{}",
+                file_path.display(),
+                content
+            ))
         }
     }
 }
@@ -302,9 +321,7 @@ pub struct FindTestsTool {
 impl FindTestsTool {
     /// Create a new find tests tool
     pub fn new(workspace: PathBuf) -> Self {
-        Self {
-            workspace,
-        }
+        Self { workspace }
     }
 }
 
@@ -319,15 +336,13 @@ impl LlmTool for FindTestsTool {
     }
 
     fn parameters(&self) -> Vec<ToolParameter> {
-        vec![
-            ToolParameter {
-                name: "query".to_string(),
-                description: "File path or module name to find tests for".to_string(),
-                required: true,
-                default_value: None,
-                param_type: Some(ToolParameterType::String),
-            },
-        ]
+        vec![ToolParameter {
+            name: "query".to_string(),
+            description: "File path or module name to find tests for".to_string(),
+            required: true,
+            default_value: None,
+            param_type: Some(ToolParameterType::String),
+        }]
     }
 
     async fn execute(&self, args: &[&str]) -> Result<String> {
@@ -365,9 +380,13 @@ impl LlmTool for FindTestsTool {
                     let entry_path = entry.path();
                     if let Some(entry_name) = entry_path.file_name() {
                         let entry_name = entry_name.to_string_lossy().to_lowercase();
-                        if entry_name.contains(&file_stem.to_lowercase()) ||
-                           entry_name.contains(&format!("test_{}", file_stem.to_lowercase())) {
-                            test_files.push(format!("tests/{}", entry_path.file_name().unwrap().to_string_lossy()));
+                        if entry_name.contains(&file_stem.to_lowercase())
+                            || entry_name.contains(&format!("test_{}", file_stem.to_lowercase()))
+                        {
+                            test_files.push(format!(
+                                "tests/{}",
+                                entry_path.file_name().unwrap().to_string_lossy()
+                            ));
                         }
                     }
                 }
@@ -382,8 +401,9 @@ impl LlmTool for FindTestsTool {
                     let entry_path = entry.path();
                     if let Some(entry_name) = entry_path.file_name() {
                         let entry_name = entry_name.to_string_lossy().to_lowercase();
-                        if (entry_name.contains("test") || entry_name.contains("spec")) &&
-                           entry_name.contains(&file_stem.to_lowercase()) {
+                        if (entry_name.contains("test") || entry_name.contains("spec"))
+                            && entry_name.contains(&file_stem.to_lowercase())
+                        {
                             let entry_rel_path = if parent.to_string_lossy().is_empty() {
                                 entry_name.to_string()
                             } else {
@@ -400,9 +420,9 @@ impl LlmTool for FindTestsTool {
         let file_content = std::fs::read_to_string(&full_path)
             .context(format!("Failed to read file: {}", file_path.display()))?;
 
-        let has_test_module = file_content.contains("#[cfg(test)]") ||
-                              file_content.contains("mod test") ||
-                              file_content.contains("mod tests");
+        let has_test_module = file_content.contains("#[cfg(test)]")
+            || file_content.contains("mod test")
+            || file_content.contains("mod tests");
 
         if has_test_module {
             test_files.push(format!("{} (contains test module)", file_path.display()));
@@ -411,7 +431,11 @@ impl LlmTool for FindTestsTool {
         if test_files.is_empty() {
             Ok(format!("No test files found for {}", file_path.display()))
         } else {
-            Ok(format!("Test files related to {}:\n- {}", file_path.display(), test_files.join("\n- ")))
+            Ok(format!(
+                "Test files related to {}:\n- {}",
+                file_path.display(),
+                test_files.join("\n- ")
+            ))
         }
     }
 }
@@ -424,9 +448,7 @@ pub struct DirectoryExplorationTool {
 impl DirectoryExplorationTool {
     /// Create a new directory exploration tool
     pub fn new(workspace: PathBuf) -> Self {
-        Self {
-            workspace,
-        }
+        Self { workspace }
     }
 }
 
@@ -458,7 +480,8 @@ impl LlmTool for DirectoryExplorationTool {
             },
             ToolParameter {
                 name: "max_depth".to_string(),
-                description: "Maximum depth to explore (1 means just the specified directory)".to_string(),
+                description: "Maximum depth to explore (1 means just the specified directory)"
+                    .to_string(),
                 required: false,
                 default_value: Some("1".to_string()),
                 param_type: Some(ToolParameterType::Integer),
@@ -475,7 +498,10 @@ impl LlmTool for DirectoryExplorationTool {
         let full_path = self.workspace.join(dir_path);
 
         if !full_path.exists() {
-            return Err(anyhow::anyhow!("Directory not found: {}", dir_path.display()));
+            return Err(anyhow::anyhow!(
+                "Directory not found: {}",
+                dir_path.display()
+            ));
         }
 
         if !full_path.is_dir() {
@@ -498,7 +524,15 @@ impl LlmTool for DirectoryExplorationTool {
         let mut result = format!("Contents of directory {}:\n", dir_path.display());
 
         // Helper function to recursively list directory contents
-        fn list_dir_contents(path: &Path, base_path: &Path, prefix: &str, show_hidden: bool, current_depth: usize, max_depth: usize, result: &mut String) -> Result<()> {
+        fn list_dir_contents(
+            path: &Path,
+            base_path: &Path,
+            prefix: &str,
+            show_hidden: bool,
+            current_depth: usize,
+            max_depth: usize,
+            result: &mut String,
+        ) -> Result<()> {
             if current_depth > max_depth {
                 return Ok(());
             }
@@ -545,7 +579,7 @@ impl LlmTool for DirectoryExplorationTool {
                             show_hidden,
                             current_depth + 1,
                             max_depth,
-                            result
+                            result,
                         )?;
                     } else if max_depth > 0 {
                         // Indicate there's more but we're not showing it
@@ -554,13 +588,13 @@ impl LlmTool for DirectoryExplorationTool {
                 } else {
                     // For files, add an icon based on file extension
                     let icon = match entry_path.extension().and_then(|e| e.to_str()) {
-                        Some("rs") => "🦀", // Rust
-                        Some("md" | "txt") => "📄", // Documentation
+                        Some("rs") => "🦀",                             // Rust
+                        Some("md" | "txt") => "📄",                     // Documentation
                         Some("toml" | "json" | "yaml" | "yml") => "⚙️", // Config
-                        Some("gitignore" | "git") => "🔄", // Git
-                        Some("sh" | "bash") => "⚡", // Scripts
-                        Some("png" | "jpg" | "jpeg" | "gif") => "🖼️", // Images
-                        _ => "📎", // Other files
+                        Some("gitignore" | "git") => "🔄",              // Git
+                        Some("sh" | "bash") => "⚡",                    // Scripts
+                        Some("png" | "jpg" | "jpeg" | "gif") => "🖼️",   // Images
+                        _ => "📎",                                      // Other files
                     };
 
                     result.push_str(&format!("{}{} {}\n", prefix, icon, file_name));
@@ -571,7 +605,15 @@ impl LlmTool for DirectoryExplorationTool {
         }
 
         // Start the recursive directory listing
-        list_dir_contents(&full_path, &self.workspace, "", show_hidden, 1, max_depth, &mut result)?;
+        list_dir_contents(
+            &full_path,
+            &self.workspace,
+            "",
+            show_hidden,
+            1,
+            max_depth,
+            &mut result,
+        )?;
 
         if max_depth > 1 {
             result.push_str("\nNote: 📁 indicates directories\n");
@@ -635,7 +677,10 @@ impl LlmTool for GitHistoryTool {
         let full_path = self.workspace.join(file_path);
 
         if !full_path.exists() {
-            return Err(anyhow::anyhow!("File or directory not found: {}", file_path));
+            return Err(anyhow::anyhow!(
+                "File or directory not found: {}",
+                file_path
+            ));
         }
 
         // Get optional commit limit
@@ -654,7 +699,8 @@ impl LlmTool for GitHistoryTool {
         let mut cmd = Command::new("git");
         cmd.current_dir(&self.workspace)
             .arg("log")
-            .arg("--max-count").arg(limit.to_string())
+            .arg("--max-count")
+            .arg(limit.to_string())
             .arg("--pretty=format:%h|%an|%ad|%s")
             .arg("--date=short")
             .arg("--");
@@ -672,7 +718,10 @@ impl LlmTool for GitHistoryTool {
                     return Ok(format!("No git history found for {}", file_path));
                 }
 
-                let mut result = format!("Git history for {} (last {} commits):\n\n", file_path, limit);
+                let mut result = format!(
+                    "Git history for {} (last {} commits):\n\n",
+                    file_path, limit
+                );
                 result.push_str("| Commit | Author | Date | Message |\n");
                 result.push_str("|--------|--------|------|--------|\n");
 
@@ -685,8 +734,10 @@ impl LlmTool for GitHistoryTool {
                         let date = parts[2];
                         let message = parts[3];
 
-                        result.push_str(&format!("| {} | {} | {} | {} |\n",
-                            commit, author, date, message));
+                        result.push_str(&format!(
+                            "| {} | {} | {} | {} |\n",
+                            commit, author, date, message
+                        ));
                     }
                 }
 
@@ -695,7 +746,8 @@ impl LlmTool for GitHistoryTool {
                     result.push_str("\n## Most recent changes\n\n");
 
                     let mut diff_cmd = Command::new("git");
-                    diff_cmd.current_dir(&self.workspace)
+                    diff_cmd
+                        .current_dir(&self.workspace)
                         .arg("show")
                         .arg("--pretty=format:")
                         .arg("--patch")
@@ -711,7 +763,10 @@ impl LlmTool for GitHistoryTool {
                             // Extract the most relevant part of the diff (limit length)
                             let condensed_diff = if diff.lines().count() > 25 {
                                 let first_lines: Vec<&str> = diff.lines().take(20).collect();
-                                format!("{}\n... (diff truncated, showing first 20 lines) ...", first_lines.join("\n"))
+                                format!(
+                                    "{}\n... (diff truncated, showing first 20 lines) ...",
+                                    first_lines.join("\n")
+                                )
                             } else {
                                 diff
                             };
@@ -723,15 +778,15 @@ impl LlmTool for GitHistoryTool {
                             result.push_str("No changes found in the most recent commit.\n");
                         }
                     } else {
-                        result.push_str("Unable to retrieve detailed changes for the most recent commit.\n");
+                        result.push_str(
+                            "Unable to retrieve detailed changes for the most recent commit.\n",
+                        );
                     }
                 }
 
                 Ok(result)
-            },
-            Err(e) => {
-                Err(anyhow::anyhow!("Failed to get git history: {}", e))
             }
+            Err(e) => Err(anyhow::anyhow!("Failed to get git history: {}", e)),
         }
     }
 }
@@ -744,17 +799,14 @@ pub struct CompilationFeedbackTool {
 impl CompilationFeedbackTool {
     /// Create a new compilation feedback tool
     pub fn new(workspace: PathBuf) -> Self {
-        Self {
-            workspace,
-        }
+        Self { workspace }
     }
 
     /// Create a temporary file with the code
     fn create_temp_file(&self, code: &str, extension: &str) -> Result<PathBuf> {
         // Create temp directory if it doesn't exist
         let temp_dir = self.workspace.join("temp");
-        std::fs::create_dir_all(&temp_dir)
-            .context("Failed to create temp directory")?;
+        std::fs::create_dir_all(&temp_dir).context("Failed to create temp directory")?;
 
         // Generate a unique filename
         let timestamp = chrono::Utc::now().timestamp();
@@ -763,8 +815,7 @@ impl CompilationFeedbackTool {
         let temp_file = temp_dir.join(filename);
 
         // Write code to file
-        std::fs::write(&temp_file, code)
-            .context("Failed to write temporary file")?;
+        std::fs::write(&temp_file, code).context("Failed to write temporary file")?;
 
         Ok(temp_file)
     }
@@ -818,9 +869,9 @@ impl LlmTool for CompilationFeedbackTool {
                 cmd.arg("--color=always")
                     .arg("--emit=metadata") // Don't generate binary, just check
                     .arg("-Z")
-                    .arg("no-codegen")      // Don't generate code
+                    .arg("no-codegen") // Don't generate code
                     .arg("--crate-type=lib") // Compile as a library
-                    .arg(&*file_path);      // Dereference the Cow<str>
+                    .arg(&*file_path); // Dereference the Cow<str>
 
                 match cmd.output() {
                     Ok(output) => {
@@ -832,18 +883,19 @@ impl LlmTool for CompilationFeedbackTool {
                         } else {
                             format!("❌ Compilation errors found:\n\n{}", stderr)
                         }
-                    },
+                    }
                     Err(e) => {
                         format!("Error running rustc: {}", e)
                     }
                 }
-            },
+            }
             "toml" => {
                 // Validate TOML using Rust's built-in parser
                 let mut cmd = Command::new("cargo");
                 cmd.arg("script");
                 cmd.arg("--");
-                cmd.arg(&format!(r#"
+                cmd.arg(&format!(
+                    r#"
                     use std::fs;
                     use std::path::Path;
 
@@ -858,7 +910,9 @@ impl LlmTool for CompilationFeedbackTool {
 
                         Ok(())
                     }}
-                "#, file_path.as_ref()));
+                "#,
+                    file_path.as_ref()
+                ));
 
                 match cmd.output() {
                     Ok(output) => {
@@ -872,7 +926,7 @@ impl LlmTool for CompilationFeedbackTool {
                         } else {
                             format!("Output: {}\nErrors: {}", stdout, stderr)
                         }
-                    },
+                    }
                     Err(e) => {
                         // Fallback to more basic validation
                         match toml::from_str::<toml::Value>(code) {
@@ -881,7 +935,7 @@ impl LlmTool for CompilationFeedbackTool {
                         }
                     }
                 }
-            },
+            }
             other => {
                 format!("Compilation check for {} files is not implemented", other)
             }
@@ -889,7 +943,11 @@ impl LlmTool for CompilationFeedbackTool {
 
         // Clean up the temporary file
         if let Err(e) = std::fs::remove_file(&temp_file) {
-            warn!("Failed to remove temporary file {}: {}", temp_file.display(), e);
+            warn!(
+                "Failed to remove temporary file {}: {}",
+                temp_file.display(),
+                e
+            );
         }
 
         Ok(result)
@@ -904,9 +962,7 @@ pub struct CreateFileTool {
 impl CreateFileTool {
     /// Create a new file creation tool
     pub fn new(workspace: PathBuf) -> Self {
-        Self {
-            workspace,
-        }
+        Self { workspace }
     }
 }
 
@@ -924,7 +980,8 @@ impl LlmTool for CreateFileTool {
         vec![
             ToolParameter {
                 name: "file_path".to_string(),
-                description: "Path to the new file to create, relative to the workspace".to_string(),
+                description: "Path to the new file to create, relative to the workspace"
+                    .to_string(),
                 required: true,
                 default_value: None,
                 param_type: Some(ToolParameterType::String),
@@ -949,7 +1006,10 @@ impl LlmTool for CreateFileTool {
 
         // Check if file already exists
         if full_path.exists() {
-            return Err(anyhow::anyhow!("File already exists: {}", file_path.display()));
+            return Err(anyhow::anyhow!(
+                "File already exists: {}",
+                file_path.display()
+            ));
         }
 
         // Create parent directories if needed
@@ -963,7 +1023,10 @@ impl LlmTool for CreateFileTool {
         std::fs::write(&full_path, content)
             .context(format!("Failed to write to file: {:?}", full_path))?;
 
-        Ok(format!("Successfully created file: {}", file_path.display()))
+        Ok(format!(
+            "Successfully created file: {}",
+            file_path.display()
+        ))
     }
 }
 
@@ -975,13 +1038,17 @@ pub struct ModifyFileTool {
 impl ModifyFileTool {
     /// Create a new file modification tool
     pub fn new(workspace: PathBuf) -> Self {
-        Self {
-            workspace,
-        }
+        Self { workspace }
     }
 
     /// Apply changes to specific lines of a file
-    fn apply_line_specific_changes(&self, content: &str, start_line: usize, end_line: Option<usize>, new_content: &str) -> Result<String> {
+    fn apply_line_specific_changes(
+        &self,
+        content: &str,
+        start_line: usize,
+        end_line: Option<usize>,
+        new_content: &str,
+    ) -> Result<String> {
         let lines: Vec<&str> = content.lines().collect();
         let start_idx = start_line.saturating_sub(1);
         let end_idx = match end_line {
@@ -990,7 +1057,10 @@ impl ModifyFileTool {
         };
 
         if start_idx >= lines.len() {
-            return Err(anyhow::anyhow!("Start line {} is beyond the end of the file", start_line));
+            return Err(anyhow::anyhow!(
+                "Start line {} is beyond the end of the file",
+                start_line
+            ));
         }
 
         let mut result = Vec::new();
@@ -1042,14 +1112,16 @@ impl LlmTool for ModifyFileTool {
             },
             ToolParameter {
                 name: "start_line".to_string(),
-                description: "Starting line number for partial modifications (1-indexed)".to_string(),
+                description: "Starting line number for partial modifications (1-indexed)"
+                    .to_string(),
                 required: false,
                 default_value: None,
                 param_type: Some(ToolParameterType::Integer),
             },
             ToolParameter {
                 name: "end_line".to_string(),
-                description: "Ending line number for partial modifications (1-indexed, inclusive)".to_string(),
+                description: "Ending line number for partial modifications (1-indexed, inclusive)"
+                    .to_string(),
                 required: false,
                 default_value: None,
                 param_type: Some(ToolParameterType::Integer),
@@ -1059,7 +1131,9 @@ impl LlmTool for ModifyFileTool {
 
     async fn execute(&self, args: &[&str]) -> Result<String> {
         if args.len() < 2 {
-            return Err(anyhow::anyhow!("Both file_path and new_content are required"));
+            return Err(anyhow::anyhow!(
+                "Both file_path and new_content are required"
+            ));
         }
 
         let file_path = Path::new(args[0]);
@@ -1067,7 +1141,10 @@ impl LlmTool for ModifyFileTool {
 
         // Check if file exists
         if !full_path.exists() {
-            return Err(anyhow::anyhow!("File does not exist: {}", file_path.display()));
+            return Err(anyhow::anyhow!(
+                "File does not exist: {}",
+                file_path.display()
+            ));
         }
 
         // Read the current content
@@ -1078,12 +1155,16 @@ impl LlmTool for ModifyFileTool {
 
         // Parse line range if specified
         let result = if args.len() > 2 {
-            let start_line = args[2].parse::<usize>()
+            let start_line = args[2]
+                .parse::<usize>()
                 .context("Invalid start_line: must be a positive integer")?;
 
             let end_line = if args.len() > 3 {
-                Some(args[3].parse::<usize>()
-                    .context("Invalid end_line: must be a positive integer")?)
+                Some(
+                    args[3]
+                        .parse::<usize>()
+                        .context("Invalid end_line: must be a positive integer")?,
+                )
             } else {
                 None
             };
@@ -1098,7 +1179,10 @@ impl LlmTool for ModifyFileTool {
         std::fs::write(&full_path, result)
             .context(format!("Failed to write to file: {:?}", full_path))?;
 
-        Ok(format!("Successfully modified file: {}", file_path.display()))
+        Ok(format!(
+            "Successfully modified file: {}",
+            file_path.display()
+        ))
     }
 }
 
@@ -1110,9 +1194,7 @@ pub struct GitCommandTool {
 impl GitCommandTool {
     /// Create a new Git command tool
     pub fn new(workspace: PathBuf) -> Self {
-        Self {
-            workspace,
-        }
+        Self { workspace }
     }
 
     /// Validate if the Git command is safe to execute
@@ -1127,9 +1209,17 @@ impl GitCommandTool {
 
         // Check for unsafe commands that could potentially harm the system
         let unsafe_operations = [
-            "clean", "reset --hard", "push --force", "push -f",
-            "filter-branch", "gc", "prune", "reflog",
-            "rm -r", "rm -rf", "rm --cached -r"
+            "clean",
+            "reset --hard",
+            "push --force",
+            "push -f",
+            "filter-branch",
+            "gc",
+            "prune",
+            "reflog",
+            "rm -r",
+            "rm -rf",
+            "rm --cached -r",
         ];
 
         for unsafe_op in unsafe_operations {
@@ -1139,10 +1229,14 @@ impl GitCommandTool {
         }
 
         // Disallow arbitrary shell commands through git hooks
-        if command.contains("hook") || command.contains(";") ||
-           command.contains("&&") || command.contains("||") ||
-           command.contains("|") || command.contains(">") ||
-           command.contains("<") {
+        if command.contains("hook")
+            || command.contains(";")
+            || command.contains("&&")
+            || command.contains("||")
+            || command.contains("|")
+            || command.contains(">")
+            || command.contains("<")
+        {
             return false;
         }
 
@@ -1161,15 +1255,13 @@ impl LlmTool for GitCommandTool {
     }
 
     fn parameters(&self) -> Vec<ToolParameter> {
-        vec![
-            ToolParameter {
-                name: "command".to_string(),
-                description: "The Git command to execute (e.g., 'status', 'log', etc.)".to_string(),
-                required: true,
-                default_value: None,
-                param_type: Some(ToolParameterType::String),
-            },
-        ]
+        vec![ToolParameter {
+            name: "command".to_string(),
+            description: "The Git command to execute (e.g., 'status', 'log', etc.)".to_string(),
+            required: true,
+            default_value: None,
+            param_type: Some(ToolParameterType::String),
+        }]
     }
 
     async fn execute(&self, args: &[&str]) -> Result<String> {
@@ -1202,7 +1294,8 @@ impl LlmTool for GitCommandTool {
         let result = if output.status.success() {
             format!("Command executed successfully:\n{}", stdout)
         } else {
-            format!("Command failed with exit code {}:\n{}",
+            format!(
+                "Command failed with exit code {}:\n{}",
                 output.status.code().unwrap_or(-1),
                 if stderr.is_empty() { stdout } else { stderr }
             )
@@ -1242,12 +1335,12 @@ impl ToolRegistry {
             }
 
             // Check for required parameters
-            let required_params: Vec<&ToolParameter> = params.iter()
-                .filter(|p| p.required)
-                .collect();
+            let required_params: Vec<&ToolParameter> =
+                params.iter().filter(|p| p.required).collect();
 
             if args.len() < required_params.len() {
-                let missing_params: Vec<String> = required_params.iter()
+                let missing_params: Vec<String> = required_params
+                    .iter()
                     .skip(args.len())
                     .map(|p| p.name.clone())
                     .collect();
@@ -1272,8 +1365,8 @@ impl ToolRegistry {
             Err(e) => ToolResult {
                 success: false,
                 result: String::new(),
-                error: Some(format!("Error executing tool: {}", e))
-            }
+                error: Some(format!("Error executing tool: {}", e)),
+            },
         }
     }
 
@@ -1297,13 +1390,15 @@ impl ToolRegistry {
         }
 
         // Look for more relaxed format (non-JSON)
-        let alt_re = regex::Regex::new(r"(?i)use\s+tool\s+([a-z_]+)(?:\s*):(?:\s*)(.+?)(?:\n|$)").unwrap();
+        let alt_re =
+            regex::Regex::new(r"(?i)use\s+tool\s+([a-z_]+)(?:\s*):(?:\s*)(.+?)(?:\n|$)").unwrap();
         for cap in alt_re.captures_iter(response) {
             let tool_name = cap[1].to_string();
             let args_text = cap[2].trim();
 
             // Simple parsing of comma-separated arguments
-            let args = args_text.split(',')
+            let args = args_text
+                .split(',')
                 .map(|s| s.trim().trim_matches(|c| c == '\'' || c == '"').to_string())
                 .collect();
 
@@ -1354,19 +1449,23 @@ impl ToolRegistry {
 
     /// Get all tool descriptions
     pub fn get_tool_descriptions(&self) -> Vec<(String, String)> {
-        self.tools.iter()
+        self.tools
+            .iter()
             .map(|(name, tool)| (name.clone(), tool.description().to_string()))
             .collect()
     }
 
     /// Get detailed information about tools including parameter specifications
     pub fn get_tool_specifications(&self) -> Vec<(String, String, Vec<ToolParameter>)> {
-        self.tools.iter()
-            .map(|(name, tool)| (
-                name.clone(),
-                tool.description().to_string(),
-                tool.parameters()
-            ))
+        self.tools
+            .iter()
+            .map(|(name, tool)| {
+                (
+                    name.clone(),
+                    tool.description().to_string(),
+                    tool.parameters(),
+                )
+            })
             .collect()
     }
 }

@@ -1,10 +1,10 @@
+use crate::core::ethics::{EthicalImpactAssessment, EthicsManager};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
-use crate::core::ethics::{EthicsManager, EthicalImpactAssessment};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use chrono::{DateTime, Utc};
-use std::collections::HashMap;
 
 /// Categories of optimization goals that the agent can pursue
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -313,7 +313,9 @@ impl OptimizationGoal {
 
     /// Check if this goal is associated with a specific strategic objective
     pub fn is_part_of_objective(&self, objective_id: &str) -> bool {
-        self.objective_id.as_ref().map_or(false, |id| id == objective_id)
+        self.objective_id
+            .as_ref()
+            .map_or(false, |id| id == objective_id)
     }
 
     /// Get a summary of the goal
@@ -381,7 +383,7 @@ impl OptimizationGoal {
     pub fn assess_ethics(&mut self, ethics_manager: &mut EthicsManager) {
         let assessment = ethics_manager.assess_ethical_impact(
             &self.description,
-            &self.implementation.clone().unwrap_or_default()
+            &self.implementation.clone().unwrap_or_default(),
         );
 
         self.ethical_assessment = Some(assessment);
@@ -460,7 +462,8 @@ impl OptimizationManager {
     /// Get goals by category
     pub fn get_goals_by_category(&self, category: OptimizationCategory) -> Vec<&OptimizationGoal> {
         let category_str = category.to_string().to_lowercase();
-        self.goals.iter()
+        self.goals
+            .iter()
             .filter(|g| g.category == category || g.tags.iter().any(|t| t == &category_str))
             .collect()
     }
@@ -468,12 +471,16 @@ impl OptimizationManager {
     /// Get goals by priority
     pub fn get_goals_by_priority(&self, priority: PriorityLevel) -> Vec<&OptimizationGoal> {
         let priority_val = u8::from(priority);
-        self.goals.iter().filter(|g| g.priority == priority_val).collect()
+        self.goals
+            .iter()
+            .filter(|g| g.priority == priority_val)
+            .collect()
     }
 
     /// Get goals that affect a specific file or area
     pub fn get_goals_by_affected_area(&self, area: &str) -> Vec<&OptimizationGoal> {
-        self.goals.iter()
+        self.goals
+            .iter()
             .filter(|g| g.tags.iter().any(|t| t.contains(area)))
             .collect()
     }
@@ -481,7 +488,9 @@ impl OptimizationManager {
     /// Get the next most important goal to work on
     pub fn get_next_goal(&self) -> Option<&OptimizationGoal> {
         // Get not started goals sorted by priority
-        let mut candidate_goals: Vec<&OptimizationGoal> = self.goals.iter()
+        let mut candidate_goals: Vec<&OptimizationGoal> = self
+            .goals
+            .iter()
             .filter(|g| g.status == GoalStatus::NotStarted)
             .collect();
 
@@ -501,17 +510,22 @@ impl OptimizationManager {
     }
 
     /// Generate a new optimization goal based on analysis
-    pub fn generate_goal(&self,
-                        analysis_result: &str,
-                        affected_files: &[String],
-                        category: OptimizationCategory) -> OptimizationGoal {
+    pub fn generate_goal(
+        &self,
+        analysis_result: &str,
+        affected_files: &[String],
+        category: OptimizationCategory,
+    ) -> OptimizationGoal {
         // Generate a unique ID
-        let id = format!("OPT-{}-{}",
-                         category.to_string().chars().next().unwrap_or('X'),
-                         chrono::Utc::now().timestamp());
+        let id = format!(
+            "OPT-{}-{}",
+            category.to_string().chars().next().unwrap_or('X'),
+            chrono::Utc::now().timestamp()
+        );
 
         // Create a basic title from the first line of analysis
-        let title = analysis_result.lines()
+        let title = analysis_result
+            .lines()
             .next()
             .unwrap_or("Optimization opportunity")
             .to_string();
@@ -542,10 +556,13 @@ impl OptimizationManager {
     /// Update goal dependences based on affected areas
     pub fn update_goal_dependencies(&mut self) {
         // First collect all goal IDs and their file tags
-        let goal_files: Vec<(String, Vec<String>)> = self.goals
+        let goal_files: Vec<(String, Vec<String>)> = self
+            .goals
             .iter()
             .map(|g| {
-                let file_tags = g.tags.iter()
+                let file_tags = g
+                    .tags
+                    .iter()
                     .filter(|t| t.starts_with("file:"))
                     .cloned()
                     .collect();
@@ -558,7 +575,9 @@ impl OptimizationManager {
 
         for goal in &self.goals {
             // Get this goal's file tags
-            let goal_file_tags: Vec<&String> = goal.tags.iter()
+            let goal_file_tags: Vec<&String> = goal
+                .tags
+                .iter()
                 .filter(|t| t.starts_with("file:"))
                 .collect();
 
@@ -572,8 +591,7 @@ impl OptimizationManager {
                 }
 
                 // Check if there's any overlap in affected files
-                let has_overlap = file_tags.iter()
-                    .any(|tag| goal_file_tags.contains(&tag));
+                let has_overlap = file_tags.iter().any(|tag| goal_file_tags.contains(&tag));
 
                 if has_overlap {
                     dependencies.push(other_id.clone());
@@ -608,7 +626,10 @@ impl OptimizationManager {
 }
 
 /// Filter goals by specific criteria
-pub fn filter_goals(goals: &[OptimizationGoal], criteria: &FilterCriteria) -> Vec<OptimizationGoal> {
+pub fn filter_goals(
+    goals: &[OptimizationGoal],
+    criteria: &FilterCriteria,
+) -> Vec<OptimizationGoal> {
     let mut filtered = goals.to_vec();
 
     // Filter by status if specified
@@ -628,9 +649,7 @@ pub fn filter_goals(goals: &[OptimizationGoal], criteria: &FilterCriteria) -> Ve
 
     // Filter by tags if specified
     if !criteria.tags.is_empty() {
-        filtered.retain(|g| {
-            criteria.tags.iter().all(|tag| g.tags.contains(tag))
-        });
+        filtered.retain(|g| criteria.tags.iter().all(|tag| g.tags.contains(tag)));
     }
 
     filtered
@@ -657,13 +676,16 @@ pub fn get_conflicting_goals(goals: &[OptimizationGoal]) -> HashMap<String, Vec<
 
     for goal in goals.iter().filter(|g| g.status == GoalStatus::InProgress) {
         // Use tags that look like file paths as affected areas
-        let file_paths: Vec<String> = goal.tags.iter()
+        let file_paths: Vec<String> = goal
+            .tags
+            .iter()
             .filter(|tag| tag.contains('/') || tag.contains('\\'))
             .cloned()
             .collect();
 
         for tag in file_paths {
-            file_goals.entry(tag)
+            file_goals
+                .entry(tag)
                 .or_insert_with(Vec::new)
                 .push(goal.id.clone());
         }
@@ -674,7 +696,9 @@ pub fn get_conflicting_goals(goals: &[OptimizationGoal]) -> HashMap<String, Vec<
         let mut conflicting = Vec::new();
 
         // Get file paths from tags
-        let file_paths: Vec<String> = goal.tags.iter()
+        let file_paths: Vec<String> = goal
+            .tags
+            .iter()
             .filter(|tag| tag.contains('/') || tag.contains('\\'))
             .cloned()
             .collect();

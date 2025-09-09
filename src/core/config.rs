@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::collections::HashMap;
 
 /// Top-level configuration structure
 #[derive(Debug, Deserialize, Clone)]
@@ -347,15 +347,16 @@ impl Config {
     #[cfg(test)]
     pub fn for_testing() -> Self {
         Self {
-            llm: HashMap::from([
-                ("mock".to_string(), LlmConfig {
+            llm: HashMap::from([(
+                "mock".to_string(),
+                LlmConfig {
                     provider: "mock".to_string(),
                     api_key: "test-key".to_string(),
                     model: "test-model".to_string(),
                     max_tokens: default_max_tokens(),
                     temperature: default_temperature(),
-                }),
-            ]),
+                },
+            )]),
             agent: AgentConfig {
                 max_memory_usage_mb: 1024,
                 max_cpu_usage_percent: 50,

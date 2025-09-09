@@ -1,30 +1,32 @@
-use anyhow::{Context, Result, anyhow};
-use log::{info, debug, warn, error};
-use std::path::{PathBuf, Path};
+use anyhow::{anyhow, Context, Result};
+use git2::{Repository, Signature};
+use log::{debug, error, info, warn};
+use serde_json;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use std::fs;
-use git2::{Repository, Signature};
 use walkdir;
-use serde_json;
 
 use crate::code_generation::generator::CodeGenerator;
 use crate::code_generation::llm_generator::LlmCodeGenerator;
+use crate::core::authentication::{AccessRole, AuthenticationManager};
 use crate::core::config::{Config, LlmConfig};
 use crate::core::ethics::EthicsManager;
-use crate::core::optimization::{OptimizationManager, OptimizationGoal, OptimizationCategory, GoalStatus, PriorityLevel};
-use crate::core::authentication::{AuthenticationManager, AccessRole};
+use crate::core::optimization::{
+    GoalStatus, OptimizationCategory, OptimizationGoal, OptimizationManager, PriorityLevel,
+};
 use crate::core::persistence::PersistenceManager;
+use crate::core::planning::{StrategicObjective, StrategicPlan, StrategicPlanningManager};
+use crate::core::strategies::CodeImprovementStrategy;
+use crate::core::strategy::{ActionType, Plan, StrategyManager};
+use crate::database::DatabaseManager;
 use crate::resource_monitor::monitor::ResourceMonitor;
 use crate::resource_monitor::monitor::SystemResourceMonitor;
-use crate::testing::test_runner::TestRunner;
 use crate::testing::simple::SimpleTestRunner;
+use crate::testing::test_runner::TestRunner;
 use crate::version_control::git::GitManager;
 use crate::version_control::git_implementation::GitImplementation;
-use crate::core::planning::{StrategicPlanningManager, StrategicObjective, StrategicPlan};
-use crate::core::strategy::{ActionType, Plan, StrategyManager};
-use crate::core::strategies::CodeImprovementStrategy;
-use crate::database::DatabaseManager;
 
 /// The main agent structure that coordinates the self-improvement process
 pub struct Agent {
@@ -71,12 +73,17 @@ pub struct Agent {
 impl Agent {
     /// Create a new agent with the given configuration
     pub async fn new(config: Config) -> Result<Self> {
-        info!("Initializing agent with working directory: {}", config.agent.working_dir);
+        info!(
+            "Initializing agent with working directory: {}",
+            config.agent.working_dir
+        );
 
         // Create the working directory if it doesn't exist
         let working_dir = PathBuf::from(&config.agent.working_dir);
-        std::fs::create_dir_all(&working_dir)
-            .context(format!("Failed to create working directory: {:?}", working_dir))?;
+        std::fs::create_dir_all(&working_dir).context(format!(
+            "Failed to create working directory: {:?}",
+            working_dir
+        ))?;
 
         // Create logs directory for LLM if enabled
         if config.llm_logging.enabled {
@@ -92,13 +99,14 @@ impl Agent {
 
         // Initialize components
         let git_manager: Arc<Mutex<dyn GitManager>> = Arc::new(Mutex::new(
-            GitImplementation::new(&working_dir)
-                .context("Failed to create GitImplementation")?
+            GitImplementation::new(&working_dir).context("Failed to create GitImplementation")?,
         ));
 
         let code_generator: Arc<dyn CodeGenerator> = {
             // Get LLM configuration - first try specific config for code generation, then default
-            let llm_config = config.llm.get("code_generation")
+            let llm_config = config
+                .llm
+                .get("code_generation")
                 .or_else(|| config.llm.get("default"))
                 .ok_or_else(|| anyhow!("No suitable LLM configuration found"))?
                 .clone();
@@ -112,33 +120,28 @@ impl Agent {
             )?)
         };
 
-        let test_runner: Arc<dyn TestRunner> = Arc::new(SimpleTestRunner::new(
-            &working_dir,
-        )?);
+        let test_runner: Arc<dyn TestRunner> = Arc::new(SimpleTestRunner::new(&working_dir)?);
 
-        let resource_monitor: Arc<Mutex<dyn ResourceMonitor>> = Arc::new(Mutex::new(
-            SystemResourceMonitor::new()
-        ));
+        let resource_monitor: Arc<Mutex<dyn ResourceMonitor>> =
+            Arc::new(Mutex::new(SystemResourceMonitor::new()));
 
         let ethics_manager = Arc::new(Mutex::new(EthicsManager::new()));
 
-        let optimization_manager = Arc::new(Mutex::new(
-            OptimizationManager::new(Arc::clone(&ethics_manager))
-        ));
+        let optimization_manager = Arc::new(Mutex::new(OptimizationManager::new(Arc::clone(
+            &ethics_manager,
+        ))));
 
-        let authentication_manager = Arc::new(Mutex::new(
-            AuthenticationManager::new()
-        ));
+        let authentication_manager = Arc::new(Mutex::new(AuthenticationManager::new()));
 
-        let persistence_manager = PersistenceManager::new(&data_dir)
-            .context("Failed to create persistence manager")?;
+        let persistence_manager =
+            PersistenceManager::new(&data_dir).context("Failed to create persistence manager")?;
 
         // Initialize the database manager
         let database_manager = match DatabaseManager::new(&data_dir, &config).await {
             Ok(manager) => {
                 info!("Database manager initialized successfully");
                 Some(Arc::new(manager))
-            },
+            }
             Err(e) => {
                 warn!("Failed to initialize database manager: {}", e);
                 warn!("Proceeding without database manager");
@@ -146,20 +149,16 @@ impl Agent {
             }
         };
 
-        let strategic_planning_manager = Arc::new(Mutex::new(
-            StrategicPlanningManager::new(
-                Arc::clone(&optimization_manager),
-                Arc::clone(&ethics_manager),
-                &data_dir.to_string_lossy(),
-            )
-        ));
+        let strategic_planning_manager = Arc::new(Mutex::new(StrategicPlanningManager::new(
+            Arc::clone(&optimization_manager),
+            Arc::clone(&ethics_manager),
+            &data_dir.to_string_lossy(),
+        )));
 
-        let strategy_manager = Arc::new(Mutex::new(
-            StrategyManager::new(
-                Arc::clone(&authentication_manager),
-                Arc::clone(&ethics_manager),
-            )
-        ));
+        let strategy_manager = Arc::new(Mutex::new(StrategyManager::new(
+            Arc::clone(&authentication_manager),
+            Arc::clone(&ethics_manager),
+        )));
 
         let agent = Self {
             config,
@@ -218,11 +217,13 @@ impl Agent {
             Ok(repo) => {
                 info!("Git repository already opened at {:?}", repo_path);
                 repo
-            },
+            }
             Err(_) => {
                 info!("Creating new Git repository at {:?}", repo_path);
-                Repository::init(repo_path)
-                    .context(format!("Failed to initialize Git repository at {:?}", repo_path))?
+                Repository::init(repo_path).context(format!(
+                    "Failed to initialize Git repository at {:?}",
+                    repo_path
+                ))?
             }
         };
 
@@ -238,21 +239,18 @@ impl Agent {
                 .context("Failed to create README.md file")?;
 
             // Add the file to the index
-            let mut index = repo.index()
-                .context("Failed to get repository index")?;
+            let mut index = repo.index().context("Failed to get repository index")?;
 
-            index.add_path(Path::new("README.md"))
+            index
+                .add_path(Path::new("README.md"))
                 .context("Failed to add README.md to index")?;
 
-            index.write()
-                .context("Failed to write index")?;
+            index.write().context("Failed to write index")?;
 
             // Create a tree from the index
-            let tree_id = index.write_tree()
-                .context("Failed to write tree")?;
+            let tree_id = index.write_tree().context("Failed to write tree")?;
 
-            let tree = repo.find_tree(tree_id)
-                .context("Failed to find tree")?;
+            let tree = repo.find_tree(tree_id).context("Failed to find tree")?;
 
             // Create a signature for the commit
             let signature = Signature::now("Borg Agent", "borg@example.com")
@@ -260,13 +258,14 @@ impl Agent {
 
             // Create the initial commit
             repo.commit(
-                Some("HEAD"),    // Reference to update
-                &signature,      // Author
-                &signature,      // Committer
+                Some("HEAD"),     // Reference to update
+                &signature,       // Author
+                &signature,       // Committer
                 "Initial commit", // Message
-                &tree,           // Tree
-                &[],             // Parents (empty for initial commit)
-            ).context("Failed to create initial commit")?;
+                &tree,            // Tree
+                &[],              // Parents (empty for initial commit)
+            )
+            .context("Failed to create initial commit")?;
 
             info!("Created initial commit with README.md");
         } else {
@@ -312,8 +311,10 @@ impl Agent {
                         "Improve the LLM prompt templates for code generation to provide more context, constraints, and examples of desired output. Include Rust best practices, memory safety guidelines, and error handling patterns in the prompts to generate higher quality and more secure code."
                     );
                     goal.priority = u8::from(PriorityLevel::High);
-                    goal.tags.push("file:src/code_generation/prompt.rs".to_string());
-                    goal.tags.push("file:src/code_generation/llm_generator.rs".to_string());
+                    goal.tags
+                        .push("file:src/code_generation/prompt.rs".to_string());
+                    goal.tags
+                        .push("file:src/code_generation/llm_generator.rs".to_string());
                     goal.success_metrics = vec![
                         "Reduction in rejected code changes by 50%".to_string(),
                         "Increase in test pass rate of generated code by 30%".to_string(),
@@ -331,7 +332,8 @@ impl Agent {
                     );
                     goal.category = OptimizationCategory::TestCoverage;
                     goal.priority = u8::from(PriorityLevel::High);
-                    goal.tags.push("file:src/testing/test_runner.rs".to_string());
+                    goal.tags
+                        .push("file:src/testing/test_runner.rs".to_string());
                     goal.tags.push("file:src/testing/simple.rs".to_string());
                     goal.success_metrics = vec![
                         "Complete test pipeline with 5+ validation stages".to_string(),
@@ -350,7 +352,8 @@ impl Agent {
                     );
                     goal.category = OptimizationCategory::Performance;
                     goal.priority = u8::from(PriorityLevel::Medium);
-                    goal.tags.push("file:src/code_generation/llm_generator.rs".to_string());
+                    goal.tags
+                        .push("file:src/code_generation/llm_generator.rs".to_string());
                     goal.tags.push("file:src/core/ethics.rs".to_string());
                     goal.success_metrics = vec![
                         "Successful integration of 4+ specialized LLMs".to_string(),
@@ -369,8 +372,10 @@ impl Agent {
                     );
                     goal.category = OptimizationCategory::Performance;
                     goal.priority = u8::from(PriorityLevel::Medium);
-                    goal.tags.push("file:src/resource_monitor/forecasting.rs".to_string());
-                    goal.tags.push("file:src/resource_monitor/monitor.rs".to_string());
+                    goal.tags
+                        .push("file:src/resource_monitor/forecasting.rs".to_string());
+                    goal.tags
+                        .push("file:src/resource_monitor/monitor.rs".to_string());
                     goal.success_metrics = vec![
                         "Predict memory usage with 90%+ accuracy".to_string(),
                         "Predict CPU usage spikes 30+ seconds in advance".to_string(),
@@ -406,9 +411,15 @@ impl Agent {
                 info!("Added optimization goal: {} ({})", goal.title, goal.id);
             }
 
-            info!("Initialized {} default optimization goals", optimization_manager.get_all_goals().len());
+            info!(
+                "Initialized {} default optimization goals",
+                optimization_manager.get_all_goals().len()
+            );
         } else {
-            info!("Found {} existing optimization goals", optimization_manager.get_all_goals().len());
+            info!(
+                "Found {} existing optimization goals",
+                optimization_manager.get_all_goals().len()
+            );
         }
 
         Ok(())
@@ -427,35 +438,53 @@ impl Agent {
         let cpu_usage = usage.cpu_usage_percent;
 
         // Get disk space via proper interface
-        let within_limits = resource_monitor.is_within_limits(&crate::resource_monitor::monitor::ResourceLimits {
-            max_memory_mb: self.config.agent.max_memory_usage_mb as f64,
-            max_cpu_percent: self.config.agent.max_cpu_usage_percent as f64,
-            max_disk_mb: Some(1000.0),  // Minimum 1GB of disk space
-        }).await?;
+        let within_limits = resource_monitor
+            .is_within_limits(&crate::resource_monitor::monitor::ResourceLimits {
+                max_memory_mb: self.config.agent.max_memory_usage_mb as f64,
+                max_cpu_percent: self.config.agent.max_cpu_usage_percent as f64,
+                max_disk_mb: Some(1000.0), // Minimum 1GB of disk space
+            })
+            .await?;
 
         // Log current resource usage
-        info!("Current resource usage - Memory: {:.1} MB, CPU: {:.1}%, Available disk: {}",
-            memory_usage, cpu_usage, if within_limits { "sufficient" } else { "insufficient" });
+        info!(
+            "Current resource usage - Memory: {:.1} MB, CPU: {:.1}%, Available disk: {}",
+            memory_usage,
+            cpu_usage,
+            if within_limits {
+                "sufficient"
+            } else {
+                "insufficient"
+            }
+        );
 
         // Check if we're exceeding limits
         if memory_usage > (self.config.agent.max_memory_usage_mb as f64) * 0.9 {
-            warn!("Memory usage is approaching limit: {:.1} MB / {} MB",
-                memory_usage, self.config.agent.max_memory_usage_mb);
+            warn!(
+                "Memory usage is approaching limit: {:.1} MB / {} MB",
+                memory_usage, self.config.agent.max_memory_usage_mb
+            );
 
             if memory_usage > self.config.agent.max_memory_usage_mb as f64 {
-                warn!("Insufficient memory available: {:.1} MB / {} MB",
-                    memory_usage, self.config.agent.max_memory_usage_mb);
+                warn!(
+                    "Insufficient memory available: {:.1} MB / {} MB",
+                    memory_usage, self.config.agent.max_memory_usage_mb
+                );
                 return Ok(false);
             }
         }
 
         if cpu_usage > (self.config.agent.max_cpu_usage_percent as f64) * 0.9 {
-            warn!("CPU usage is approaching limit: {:.1}% / {}%",
-                cpu_usage, self.config.agent.max_cpu_usage_percent);
+            warn!(
+                "CPU usage is approaching limit: {:.1}% / {}%",
+                cpu_usage, self.config.agent.max_cpu_usage_percent
+            );
 
             if cpu_usage > self.config.agent.max_cpu_usage_percent as f64 {
-                warn!("Insufficient CPU available: {:.1}% / {}%",
-                    cpu_usage, self.config.agent.max_cpu_usage_percent);
+                warn!(
+                    "Insufficient CPU available: {:.1}% / {}%",
+                    cpu_usage, self.config.agent.max_cpu_usage_percent
+                );
                 return Ok(false);
             }
         }
@@ -471,7 +500,7 @@ impl Agent {
             Ok(_) => {
                 // Clean up test file
                 let _ = fs::remove_file(&test_file);
-            },
+            }
             Err(e) => {
                 warn!("Failed to write to working directory: {}", e);
                 return Ok(false);
@@ -490,9 +519,12 @@ impl Agent {
 
         match next_goal {
             Some(goal) => {
-                info!("Selected next optimization goal: {} ({})", goal.title, goal.id);
+                info!(
+                    "Selected next optimization goal: {} ({})",
+                    goal.title, goal.id
+                );
                 Ok(Some(goal.clone()))
-            },
+            }
             None => {
                 info!("No optimization goals available to work on");
                 Ok(None)
@@ -530,22 +562,33 @@ impl Agent {
         let context = self.create_code_context(goal).await?;
 
         // Use the code generator to generate an improvement
-        let improvement = self.code_generator.generate_improvement(&context).await
+        let improvement = self
+            .code_generator
+            .generate_improvement(&context)
+            .await
             .context("Failed to generate code improvement")?;
 
         // Log success
-        info!("Successfully generated improvement for goal: {} with ID: {}", goal.id, improvement.id);
+        info!(
+            "Successfully generated improvement for goal: {} with ID: {}",
+            goal.id, improvement.id
+        );
 
         // Return the raw code content
         Ok(improvement.code)
     }
 
     /// Create a code context from an optimization goal
-    async fn create_code_context(&self, goal: &OptimizationGoal) -> Result<crate::code_generation::generator::CodeContext> {
+    async fn create_code_context(
+        &self,
+        goal: &OptimizationGoal,
+    ) -> Result<crate::code_generation::generator::CodeContext> {
         use crate::code_generation::generator::CodeContext;
 
         // Get the file paths for the goal
-        let file_paths: Vec<String> = goal.tags.iter()
+        let file_paths: Vec<String> = goal
+            .tags
+            .iter()
             .filter(|tag| tag.starts_with("file:"))
             .map(|tag| tag.trim_start_matches("file:").to_string())
             .collect();
@@ -554,9 +597,11 @@ impl Agent {
         let context = CodeContext {
             task: goal.description.clone(),
             file_paths: file_paths,
-            requirements: Some(format!("Category: {}\nPriority: {}",
+            requirements: Some(format!(
+                "Category: {}\nPriority: {}",
                 goal.category.to_string(),
-                goal.priority.to_string())),
+                goal.priority.to_string()
+            )),
             previous_attempts: Vec::new(), // For now, we don't track previous attempts
             file_contents: None,
             test_files: None,
@@ -571,12 +616,22 @@ impl Agent {
     }
 
     /// Apply a code change to a branch
-    async fn apply_change(&self, goal: &OptimizationGoal, branch_name: &str, code: &str) -> Result<()> {
-        info!("Applying change for goal {} to branch {}", goal.id, branch_name);
+    async fn apply_change(
+        &self,
+        goal: &OptimizationGoal,
+        branch_name: &str,
+        code: &str,
+    ) -> Result<()> {
+        info!(
+            "Applying change for goal {} to branch {}",
+            goal.id, branch_name
+        );
 
         // Open the repository
-        let repo = Repository::open(&self.working_dir)
-            .context(format!("Failed to open repository at {:?}", self.working_dir))?;
+        let repo = Repository::open(&self.working_dir).context(format!(
+            "Failed to open repository at {:?}",
+            self.working_dir
+        ))?;
 
         // Extract file changes from the LLM code response
         let improvement_result = self.parse_code_changes(code)?;
@@ -585,7 +640,10 @@ impl Agent {
             return Err(anyhow!("No files to modify were identified in the code"));
         }
 
-        info!("Found {} file(s) to modify", improvement_result.target_files.len());
+        info!(
+            "Found {} file(s) to modify",
+            improvement_result.target_files.len()
+        );
 
         // Apply each file change
         for file_change in &improvement_result.target_files {
@@ -605,22 +663,30 @@ impl Agent {
                 .context(format!("Failed to write to file: {:?}", full_path))?;
 
             // Stage the file
-            let mut index = repo.index()
-                .context("Failed to get repository index")?;
+            let mut index = repo.index().context("Failed to get repository index")?;
 
             // Get relative path
-            let relative_path_str = target_path.to_str()
+            let relative_path_str = target_path
+                .to_str()
                 .ok_or_else(|| anyhow!("Failed to convert path to string"))?;
 
             info!("Adding file to index: {}", relative_path_str);
-            index.add_path(Path::new(relative_path_str))
-                .context(format!("Failed to add file to index: {}", relative_path_str))?;
+            index
+                .add_path(Path::new(relative_path_str))
+                .context(format!(
+                    "Failed to add file to index: {}",
+                    relative_path_str
+                ))?;
 
             index.write().context("Failed to write index")?;
         }
 
         // Create a commit
-        let tree_id = repo.index().unwrap().write_tree().context("Failed to write tree")?;
+        let tree_id = repo
+            .index()
+            .unwrap()
+            .write_tree()
+            .context("Failed to write tree")?;
         let tree = repo.find_tree(tree_id).context("Failed to find tree")?;
 
         // Create signature
@@ -640,7 +706,8 @@ impl Agent {
                 &message,
                 &tree,
                 &[&parent],
-            ).context("Failed to create commit")?
+            )
+            .context("Failed to create commit")?
         } else {
             repo.commit(
                 Some(&format!("refs/heads/{}", branch_name)),
@@ -649,7 +716,8 @@ impl Agent {
                 &message,
                 &tree,
                 &[],
-            ).context("Failed to create commit")?
+            )
+            .context("Failed to create commit")?
         };
 
         info!("Successfully applied changes for goal {}", goal.id);
@@ -657,7 +725,10 @@ impl Agent {
     }
 
     /// Parse code changes from LLM response
-    fn parse_code_changes(&self, code: &str) -> Result<crate::code_generation::generator::CodeImprovement> {
+    fn parse_code_changes(
+        &self,
+        code: &str,
+    ) -> Result<crate::code_generation::generator::CodeImprovement> {
         // Create a code generator instance
         let code_gen = self.code_generator.clone();
 
@@ -689,7 +760,10 @@ impl Agent {
     }
 
     /// Extract file changes from code string
-    fn extract_file_changes(&self, code: &str) -> Result<Vec<crate::code_generation::generator::FileChange>> {
+    fn extract_file_changes(
+        &self,
+        code: &str,
+    ) -> Result<Vec<crate::code_generation::generator::FileChange>> {
         let re = regex::Regex::new(r"```(?:rust|rs)?\s*(?:\n|\r\n)([\s\S]*?)```").unwrap();
         let mut changes = Vec::new();
 
@@ -707,7 +781,10 @@ impl Agent {
 
             // Look for the last file path mention before this code block
             if let Some(file_cap) = file_re.captures_iter(pre_code).last() {
-                file_path = file_cap.get(1).or(file_cap.get(2)).or(file_cap.get(3))
+                file_path = file_cap
+                    .get(1)
+                    .or(file_cap.get(2))
+                    .or(file_cap.get(3))
                     .map(|m| m.as_str().to_string())
                     .unwrap_or_default();
             }
@@ -728,7 +805,10 @@ impl Agent {
         if changes.is_empty() {
             // If no code blocks found, try to look for file path mentions anyway
             for cap in file_re.captures_iter(code) {
-                let file_path = cap.get(1).or(cap.get(2)).or(cap.get(3))
+                let file_path = cap
+                    .get(1)
+                    .or(cap.get(2))
+                    .or(cap.get(3))
                     .map(|m| m.as_str().to_string())
                     .unwrap_or_default();
                 if !file_path.is_empty() {
@@ -748,7 +828,8 @@ impl Agent {
                 file_path: "src/main.rs".to_string(),
                 start_line: None,
                 end_line: None,
-                new_content: "// No specific file identified, adding placeholder comment".to_string(),
+                new_content: "// No specific file identified, adding placeholder comment"
+                    .to_string(),
             });
         }
 
@@ -772,8 +853,10 @@ impl Agent {
 
             // Check specific metrics if available
             if let Some(metrics) = &result.metrics {
-                info!("Test metrics: {} tests run, {} passed, {} failed",
-                      metrics.tests_run, metrics.tests_passed, metrics.tests_failed);
+                info!(
+                    "Test metrics: {} tests run, {} passed, {} failed",
+                    metrics.tests_run, metrics.tests_passed, metrics.tests_failed
+                );
             }
 
             Ok(true)
@@ -792,7 +875,12 @@ impl Agent {
     }
 
     /// Evaluate the results of a code change
-    async fn evaluate_results(&self, goal: &OptimizationGoal, branch: &str, test_passed: bool) -> Result<bool> {
+    async fn evaluate_results(
+        &self,
+        goal: &OptimizationGoal,
+        branch: &str,
+        test_passed: bool,
+    ) -> Result<bool> {
         info!("Evaluating results for goal: {}", goal.id);
 
         // If tests didn't pass, the change is rejected
@@ -816,19 +904,22 @@ impl Agent {
                 // Continue with evaluation despite benchmark execution failure
             } else {
                 // Parse and validate benchmark results
-                let benchmark_improvements = self.analyze_benchmark_results(&benchmark_result.output)?;
+                let benchmark_improvements =
+                    self.analyze_benchmark_results(&benchmark_result.output)?;
 
                 // Check if performance goals were met
                 let target = goal.improvement_target;
                 if target > 0 && !benchmark_improvements.is_empty() {
-                    let avg_improvement = benchmark_improvements.iter().sum::<f64>() /
-                                        benchmark_improvements.len() as f64;
+                    let avg_improvement = benchmark_improvements.iter().sum::<f64>()
+                        / benchmark_improvements.len() as f64;
 
                     info!("Average performance improvement: {:.2}%", avg_improvement);
 
                     if avg_improvement < target as f64 {
-                        warn!("Performance improvement of {:.2}% below target of {}%",
-                            avg_improvement, target);
+                        warn!(
+                            "Performance improvement of {:.2}% below target of {}%",
+                            avg_improvement, target
+                        );
 
                         // Fail if the improvement is significantly below target (less than 70% of target)
                         if avg_improvement < (target as f64 * 0.7) {
@@ -839,8 +930,10 @@ impl Agent {
                         // Allow if it's close to target
                         warn!("Accepting change despite being below target as it's within 70% of goal");
                     } else {
-                        info!("Performance improvement met or exceeded target: {:.2}% vs {}%",
-                            avg_improvement, target);
+                        info!(
+                            "Performance improvement met or exceeded target: {:.2}% vs {}%",
+                            avg_improvement, target
+                        );
                     }
                 } else if benchmark_improvements.is_empty() {
                     // We expected performance improvements but couldn't measure any
@@ -854,9 +947,15 @@ impl Agent {
         // Add category-specific validations
         let category_validation_passed = match goal.category {
             OptimizationCategory::Security => self.validate_security_goal(goal, branch).await?,
-            OptimizationCategory::Readability => self.validate_readability_goal(goal, branch).await?,
-            OptimizationCategory::TestCoverage => self.validate_test_coverage_goal(goal, branch).await?,
-            OptimizationCategory::ErrorHandling => self.validate_error_handling_goal(goal, branch).await?,
+            OptimizationCategory::Readability => {
+                self.validate_readability_goal(goal, branch).await?
+            }
+            OptimizationCategory::TestCoverage => {
+                self.validate_test_coverage_goal(goal, branch).await?
+            }
+            OptimizationCategory::ErrorHandling => {
+                self.validate_error_handling_goal(goal, branch).await?
+            }
             OptimizationCategory::Financial => self.validate_financial_goal(goal, branch).await?,
             _ => true, // Default validation passes for other categories
         };
@@ -883,13 +982,16 @@ impl Agent {
             return Ok(true);
         }
 
-        info!("Validating {} success metrics for goal: {}",
-            goal.success_metrics.len(), goal.id);
+        info!(
+            "Validating {} success metrics for goal: {}",
+            goal.success_metrics.len(),
+            goal.id
+        );
 
         let mut all_metrics_passed = true;
 
         for (i, metric) in goal.success_metrics.iter().enumerate() {
-            info!("Evaluating metric {}: {}", i+1, metric);
+            info!("Evaluating metric {}: {}", i + 1, metric);
 
             // Parse and evaluate the metric
             let metric_passed = match self.evaluate_metric(metric, goal, branch).await {
@@ -912,7 +1014,12 @@ impl Agent {
     }
 
     /// Evaluate a specific metric
-    async fn evaluate_metric(&self, metric: &str, goal: &OptimizationGoal, branch: &str) -> Result<bool> {
+    async fn evaluate_metric(
+        &self,
+        metric: &str,
+        goal: &OptimizationGoal,
+        branch: &str,
+    ) -> Result<bool> {
         // This implementation would parse the metric string and evaluate it
         // For example, metrics might be in format "coverage > 80%" or "error rate < 0.1%"
 
@@ -923,7 +1030,10 @@ impl Agent {
         } else if metric.contains("complexity") || metric.contains("cognitive") {
             // Code complexity metric
             return self.evaluate_complexity_metric(metric, goal, branch).await;
-        } else if metric.contains("performance") || metric.contains("speed") || metric.contains("time") {
+        } else if metric.contains("performance")
+            || metric.contains("speed")
+            || metric.contains("time")
+        {
             // Performance metric
             return self.evaluate_performance_metric(metric, branch).await;
         } else if metric.contains("error") || metric.contains("exception") {
@@ -959,8 +1069,16 @@ impl Agent {
     }
 
     /// Evaluate a complexity metric for a branch
-    async fn evaluate_complexity_metric(&self, metric: &str, goal: &OptimizationGoal, branch: &str) -> Result<bool> {
-        info!("Evaluating complexity metric '{}' for branch '{}'", metric, branch);
+    async fn evaluate_complexity_metric(
+        &self,
+        metric: &str,
+        goal: &OptimizationGoal,
+        branch: &str,
+    ) -> Result<bool> {
+        info!(
+            "Evaluating complexity metric '{}' for branch '{}'",
+            metric, branch
+        );
 
         // Extract the target value from the metric
         let target = extract_numeric_target(metric)?;
@@ -974,8 +1092,10 @@ impl Agent {
             .await?;
 
         if !complexity_result.status.success() {
-            warn!("Failed to run complexity analysis: {}",
-                String::from_utf8_lossy(&complexity_result.stderr));
+            warn!(
+                "Failed to run complexity analysis: {}",
+                String::from_utf8_lossy(&complexity_result.stderr)
+            );
 
             // Fall back to a basic complexity estimation based on file stats
             let complexity = Agent::fallback_complexity_analysis(metric)?;
@@ -986,7 +1106,10 @@ impl Agent {
                 10.0 // Default threshold
             };
 
-            info!("Complexity analysis: Score={:.2}, Target={:.2}", complexity, target);
+            info!(
+                "Complexity analysis: Score={:.2}, Target={:.2}",
+                complexity, target
+            );
             return Ok(complexity <= target);
         }
 
@@ -994,7 +1117,10 @@ impl Agent {
         let output = String::from_utf8_lossy(&complexity_result.stdout).to_string();
         let complexity = Agent::parse_complexity_output(&output)?;
 
-        info!("Complexity analysis: Score={:.2}, Target={:.2}", complexity, target);
+        info!(
+            "Complexity analysis: Score={:.2}, Target={:.2}",
+            complexity, target
+        );
 
         // Check if the complexity is below the target
         Ok(complexity <= target)
@@ -1008,7 +1134,11 @@ impl Agent {
                 // Extract numeric values from the line
                 let numbers: Vec<f64> = line
                     .split_whitespace()
-                    .filter_map(|word| word.trim_matches(|c: char| !c.is_digit(10) && c != '.').parse::<f64>().ok())
+                    .filter_map(|word| {
+                        word.trim_matches(|c: char| !c.is_digit(10) && c != '.')
+                            .parse::<f64>()
+                            .ok()
+                    })
                     .collect();
 
                 if !numbers.is_empty() {
@@ -1059,7 +1189,10 @@ impl Agent {
             serde_json::Value::Object(map) => {
                 // Check for keys that might indicate complexity metrics
                 for (key, value) in map {
-                    if key.contains("complex") || key.contains("cyclomatic") || key.contains("cognitive") {
+                    if key.contains("complex")
+                        || key.contains("cyclomatic")
+                        || key.contains("cognitive")
+                    {
                         if let Some(num) = value.as_f64() {
                             return Some(num);
                         } else if let Some(num) = value.as_i64() {
@@ -1094,7 +1227,7 @@ impl Agent {
                     None
                 }
             }
-            _ => None
+            _ => None,
         }
     }
 
@@ -1121,7 +1254,10 @@ impl Agent {
 
         let avg_improvement = improvements.iter().sum::<f64>() / improvements.len() as f64;
 
-        info!("Performance improvement: {:.2}%, Target: {:.2}%", avg_improvement, target);
+        info!(
+            "Performance improvement: {:.2}%, Target: {:.2}%",
+            avg_improvement, target
+        );
 
         // Check if we met the target
         Ok(avg_improvement >= target)
@@ -1134,7 +1270,10 @@ impl Agent {
 
         // Run error handling tests
         info!("Running error handling tests for branch: {}", branch);
-        let error_test_result = self.test_runner.run_tests_with_tag(branch, "error-handling").await?;
+        let error_test_result = self
+            .test_runner
+            .run_tests_with_tag(branch, "error-handling")
+            .await?;
 
         if !error_test_result.success {
             warn!("Error handling tests failed: {}", error_test_result.output);
@@ -1191,7 +1330,9 @@ impl Agent {
             for line in &lines {
                 // Detect function declarations
                 if let Some(captures) = fn_regex.captures(line) {
-                    if in_function && (current_function_returns_result || current_function_returns_option) {
+                    if in_function
+                        && (current_function_returns_result || current_function_returns_option)
+                    {
                         total_functions += 1;
                         if current_function_has_error_handling {
                             functions_with_error_handling += 1;
@@ -1214,7 +1355,8 @@ impl Agent {
                 }
 
                 // Check for error handling patterns
-                let has_error_handling = error_handling_patterns.iter()
+                let has_error_handling = error_handling_patterns
+                    .iter()
                     .any(|pattern| pattern.is_match(line));
 
                 if has_error_handling {
@@ -1297,7 +1439,10 @@ impl Agent {
     /// Validate a security optimization goal
     async fn validate_security_goal(&self, goal: &OptimizationGoal, branch: &str) -> Result<bool> {
         // Run security-specific tests and analysis
-        let security_test_result = self.test_runner.run_tests_with_tag(branch, "security").await?;
+        let security_test_result = self
+            .test_runner
+            .run_tests_with_tag(branch, "security")
+            .await?;
 
         if !security_test_result.success {
             warn!("Security tests failed: {}", security_test_result.output);
@@ -1311,7 +1456,11 @@ impl Agent {
     }
 
     /// Validate a readability optimization goal
-    async fn validate_readability_goal(&self, _goal: &OptimizationGoal, branch: &str) -> Result<bool> {
+    async fn validate_readability_goal(
+        &self,
+        _goal: &OptimizationGoal,
+        branch: &str,
+    ) -> Result<bool> {
         // Run linting and style checks
         let lint_result = self.test_runner.run_linting(branch).await?;
 
@@ -1329,7 +1478,11 @@ impl Agent {
     }
 
     /// Validate a test coverage optimization goal
-    async fn validate_test_coverage_goal(&self, goal: &OptimizationGoal, branch: &str) -> Result<bool> {
+    async fn validate_test_coverage_goal(
+        &self,
+        goal: &OptimizationGoal,
+        branch: &str,
+    ) -> Result<bool> {
         // Run coverage analysis
         let coverage_result = self.test_runner.run_coverage_analysis(branch).await?;
 
@@ -1344,15 +1497,25 @@ impl Agent {
         // Get the target coverage from the goal
         let target_coverage = goal.improvement_target as f64;
 
-        info!("Test coverage: {:.2}%, Target: {:.2}%", coverage, target_coverage);
+        info!(
+            "Test coverage: {:.2}%, Target: {:.2}%",
+            coverage, target_coverage
+        );
 
         Ok(coverage >= target_coverage)
     }
 
     /// Validate an error handling optimization goal
-    async fn validate_error_handling_goal(&self, _goal: &OptimizationGoal, branch: &str) -> Result<bool> {
+    async fn validate_error_handling_goal(
+        &self,
+        _goal: &OptimizationGoal,
+        branch: &str,
+    ) -> Result<bool> {
         // Run error scenario tests
-        let error_test_result = self.test_runner.run_tests_with_tag(branch, "error-handling").await?;
+        let error_test_result = self
+            .test_runner
+            .run_tests_with_tag(branch, "error-handling")
+            .await?;
 
         if !error_test_result.success {
             warn!("Error handling tests failed: {}", error_test_result.output);
@@ -1368,7 +1531,11 @@ impl Agent {
     }
 
     /// Validate a financial optimization goal
-    async fn validate_financial_goal(&self, goal: &OptimizationGoal, _branch: &str) -> Result<bool> {
+    async fn validate_financial_goal(
+        &self,
+        goal: &OptimizationGoal,
+        _branch: &str,
+    ) -> Result<bool> {
         info!("Validating financial goal in permissive mode: {}", goal.id);
 
         // In a real implementation, we'd run:
@@ -1377,7 +1544,9 @@ impl Agent {
         // - Compliance checks
 
         // For now, we'll accept if the goal has been properly reviewed
-        let has_review = goal.implementation_notes.as_ref()
+        let has_review = goal
+            .implementation_notes
+            .as_ref()
             .map(|notes| notes.contains("reviewed"))
             .unwrap_or(false);
 
@@ -1397,7 +1566,8 @@ impl Agent {
         if let Some(db_manager) = &self.database_manager {
             match db_manager.goals().get_all().await {
                 Ok(records) if !records.is_empty() => {
-                    let goals: Vec<OptimizationGoal> = records.into_iter()
+                    let goals: Vec<OptimizationGoal> = records
+                        .into_iter()
                         .map(|record| record.entity().clone())
                         .collect();
 
@@ -1406,12 +1576,15 @@ impl Agent {
                         optimization_manager.add_goal(goal);
                     }
 
-                    info!("Loaded {} optimization goals from database", optimization_manager.get_all_goals().len());
+                    info!(
+                        "Loaded {} optimization goals from database",
+                        optimization_manager.get_all_goals().len()
+                    );
                     return Ok(());
-                },
+                }
                 Ok(_) => {
                     debug!("No optimization goals found in database");
-                },
+                }
                 Err(e) => {
                     warn!("Failed to load optimization goals from database: {}", e);
                 }
@@ -1426,10 +1599,12 @@ impl Agent {
                     optimization_manager.add_goal(goal);
                 }
 
-                info!("Loaded {} optimization goals from persistence manager",
-                    optimization_manager.get_all_goals().len());
+                info!(
+                    "Loaded {} optimization goals from persistence manager",
+                    optimization_manager.get_all_goals().len()
+                );
                 Ok(())
-            },
+            }
             Err(e) => {
                 warn!("Failed to load optimization goals from disk: {}", e);
                 Ok(()) // Return Ok to continue even if loading fails
@@ -1445,7 +1620,8 @@ impl Agent {
             optimization_manager.get_all_goals().to_vec()
         };
 
-        self.persistence_manager.save_optimization_goals(&goals)
+        self.persistence_manager
+            .save_optimization_goals(&goals)
             .context("Failed to save optimization goals with persistence manager")?;
 
         // If database manager is available, also save to database
@@ -1501,7 +1677,10 @@ impl Agent {
 
         strategy_manager.register_strategy(code_improvement_strategy);
 
-        info!("Registered {} strategies", strategy_manager.get_strategies().len());
+        info!(
+            "Registered {} strategies",
+            strategy_manager.get_strategies().len()
+        );
 
         Ok(())
     }
@@ -1557,7 +1736,8 @@ impl Agent {
         // Update goal status based on the result
         if result.success {
             info!("Successfully completed goal {}", goal.id);
-            self.update_goal_status(&goal.id, GoalStatus::Completed).await;
+            self.update_goal_status(&goal.id, GoalStatus::Completed)
+                .await;
         } else {
             warn!("Failed to complete goal {}: {}", goal.id, result.message);
             self.update_goal_status(&goal.id, GoalStatus::Failed).await;
@@ -1586,7 +1766,11 @@ impl Agent {
     /// Get a list of all registered strategies
     pub async fn get_registered_strategies(&self) -> Vec<String> {
         let strategy_manager = self.strategy_manager.lock().await;
-        strategy_manager.get_strategies().into_iter().map(|s| s.to_string()).collect()
+        strategy_manager
+            .get_strategies()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect()
     }
 
     /// Execute a specific plan
@@ -1604,23 +1788,32 @@ impl Agent {
     }
 
     /// Find the commit pointed to by a branch
-    fn find_branch_commit<'a>(&self, repo: &'a Repository, branch_name: &str) -> Result<Option<git2::Commit<'a>>> {
+    fn find_branch_commit<'a>(
+        &self,
+        repo: &'a Repository,
+        branch_name: &str,
+    ) -> Result<Option<git2::Commit<'a>>> {
         let reference_name = format!("refs/heads/{}", branch_name);
 
         match repo.find_reference(&reference_name) {
             Ok(reference) => {
                 // Get the target commit from the reference
-                let target_oid = reference.target()
+                let target_oid = reference
+                    .target()
                     .context("Failed to get target from reference")?;
 
-                let commit = repo.find_commit(target_oid)
+                let commit = repo
+                    .find_commit(target_oid)
                     .context("Failed to find commit")?;
 
                 Ok(Some(commit))
-            },
+            }
             Err(_) => {
                 // Branch might not exist yet
-                warn!("Could not find reference for branch '{}'. May be creating a new branch.", branch_name);
+                warn!(
+                    "Could not find reference for branch '{}'. May be creating a new branch.",
+                    branch_name
+                );
                 Ok(None)
             }
         }
@@ -1636,11 +1829,10 @@ impl Agent {
     pub async fn list_strategic_objectives(&self) -> Vec<StrategicObjective> {
         if let Some(db_manager) = &self.database_manager {
             match futures::executor::block_on(db_manager.objectives().get_all()) {
-                Ok(records) => {
-                    records.into_iter()
-                        .map(|record| record.entity().clone())
-                        .collect()
-                },
+                Ok(records) => records
+                    .into_iter()
+                    .map(|record| record.entity().clone())
+                    .collect(),
                 Err(e) => {
                     error!("Error retrieving strategic objectives from database: {}", e);
                     Vec::new()
@@ -1666,10 +1858,13 @@ impl Agent {
 
         // Save to the database if available
         if let Some(db_manager) = &self.database_manager {
-            match db_manager.save_plan(planning_manager.get_plan().clone()).await {
+            match db_manager
+                .save_plan(planning_manager.get_plan().clone())
+                .await
+            {
                 Ok(_) => {
                     info!("Saved strategic plan to MongoDB database");
-                },
+                }
                 Err(e) => {
                     warn!("Failed to save strategic plan to database: {}", e);
                 }
@@ -1687,7 +1882,7 @@ impl Agent {
                 Ok(None) => {
                     debug!("No current strategic plan found in database");
                     None
-                },
+                }
                 Err(e) => {
                     error!("Error retrieving strategic plan from database: {}", e);
                     None
@@ -1703,14 +1898,18 @@ impl Agent {
     /// Save a strategic plan to the database
     pub async fn save_strategic_plan(&self, plan: StrategicPlan) -> Result<()> {
         if let Some(db_manager) = &self.database_manager {
-            db_manager.save_full_plan(&plan).await
+            db_manager
+                .save_full_plan(&plan)
+                .await
                 .context("Failed to save strategic plan to database")?;
             Ok(())
         } else {
             // Fall back to the in-memory plan in the strategic planning manager
             let mut planning_manager = self.strategic_planning_manager.lock().await;
             planning_manager.set_plan(plan);
-            planning_manager.save_to_disk().await
+            planning_manager
+                .save_to_disk()
+                .await
                 .context("Failed to save strategic plan to disk")?;
             Ok(())
         }
@@ -1724,7 +1923,9 @@ impl Agent {
     /// Get the LLM config for planning
     pub fn get_planning_llm_config(&self) -> Option<LlmConfig> {
         // Try to get the planning-specific LLM config first
-        self.config.llm.get("planning")
+        self.config
+            .llm
+            .get("planning")
             .or_else(|| self.config.llm.get("default"))
             .cloned()
     }
@@ -1823,12 +2024,12 @@ impl Agent {
                     info!("Loaded strategic plan from MongoDB");
                     let mut planning_manager = self.strategic_planning_manager.lock().await;
                     planning_manager.set_plan(plan);
-                },
+                }
                 Ok(None) => {
                     info!("No strategic plan found in MongoDB, checking file system");
                     let mut planning_manager = self.strategic_planning_manager.lock().await;
                     planning_manager.load_from_disk().await?;
-                },
+                }
                 Err(e) => {
                     warn!("Failed to load strategic plan from MongoDB: {} - falling back to file system", e);
                     let mut planning_manager = self.strategic_planning_manager.lock().await;
@@ -1857,7 +2058,7 @@ impl Agent {
             Ok(role) => {
                 info!("Agent authenticated successfully with role: {}", role);
                 Ok(())
-            },
+            }
             Err(e) => {
                 warn!("Failed to authenticate agent: {}", e);
                 // Continue without authentication - operations requiring it will fail
@@ -1899,14 +2100,15 @@ impl Agent {
     }
 
     /// Add a strategic objective
-    pub async fn add_strategic_objective(&self,
+    pub async fn add_strategic_objective(
+        &self,
         id: &str,
         title: &str,
         description: &str,
         timeframe: u32,
         creator: &str,
         key_results: Vec<String>,
-        constraints: Vec<String>
+        constraints: Vec<String>,
     ) -> Result<()> {
         let mut planning_manager = self.strategic_planning_manager.lock().await;
 
@@ -1925,15 +2127,19 @@ impl Agent {
         // Add timeout to milestone generation
         let milestone_result = tokio::time::timeout(
             std::time::Duration::from_secs(5), // 5 second timeout
-            planning_manager.generate_milestones_for_objective(&objective)
-        ).await;
+            planning_manager.generate_milestones_for_objective(&objective),
+        )
+        .await;
 
         let milestones = match milestone_result {
             Ok(Ok(milestones)) => milestones,
             Ok(Err(e)) => {
-                warn!("Error generating milestones: {} - continuing without milestones", e);
+                warn!(
+                    "Error generating milestones: {} - continuing without milestones",
+                    e
+                );
                 Vec::new()
-            },
+            }
             Err(_) => {
                 warn!("Milestone generation timed out after 5 seconds - continuing without milestones");
                 Vec::new()
@@ -1954,30 +2160,36 @@ impl Agent {
         if let Some(db_manager) = &self.database_manager {
             match tokio::time::timeout(
                 std::time::Duration::from_secs(3), // 3 second timeout
-                db_manager.save_plan(plan)
-            ).await {
+                db_manager.save_plan(plan),
+            )
+            .await
+            {
                 Ok(Ok(_)) => {
                     info!("Saved strategic plan to MongoDB database");
-                },
+                }
                 Ok(Err(e)) => {
                     warn!("Failed to save strategic plan to MongoDB: {} - falling back to file system", e);
                     // Fall back to file system
                     let mut planning_manager = self.strategic_planning_manager.lock().await;
                     if let Err(e) = tokio::time::timeout(
                         std::time::Duration::from_secs(3), // 3 second timeout
-                        planning_manager.save_to_disk()
-                    ).await {
+                        planning_manager.save_to_disk(),
+                    )
+                    .await
+                    {
                         warn!("Saving plan to disk timed out: {} - continuing anyway", e);
                     }
-                },
+                }
                 Err(_) => {
                     warn!("Save to MongoDB timed out - falling back to file system");
                     // Fall back to file system
                     let mut planning_manager = self.strategic_planning_manager.lock().await;
                     if let Err(e) = tokio::time::timeout(
                         std::time::Duration::from_secs(3), // 3 second timeout
-                        planning_manager.save_to_disk()
-                    ).await {
+                        planning_manager.save_to_disk(),
+                    )
+                    .await
+                    {
                         warn!("Saving plan to disk timed out: {} - continuing anyway", e);
                     }
                 }
@@ -1987,8 +2199,10 @@ impl Agent {
             let mut planning_manager = self.strategic_planning_manager.lock().await;
             if let Err(e) = tokio::time::timeout(
                 std::time::Duration::from_secs(3), // 3 second timeout
-                planning_manager.save_to_disk()
-            ).await {
+                planning_manager.save_to_disk(),
+            )
+            .await
+            {
                 warn!("Saving plan to disk timed out: {} - continuing anyway", e);
             }
         }
@@ -2015,7 +2229,10 @@ impl Agent {
 fn extract_numeric_target(metric: &str) -> Result<f64> {
     // Look for patterns like "X > 80%" or "Y < 5"
     for part in metric.split_whitespace() {
-        if let Ok(value) = part.trim_end_matches(&['%', ',', '.', ':', ';']).parse::<f64>() {
+        if let Ok(value) = part
+            .trim_end_matches(&['%', ',', '.', ':', ';'])
+            .parse::<f64>()
+        {
             return Ok(value);
         }
     }
@@ -2057,4 +2274,3 @@ fn parse_coverage_percentage(output: &str) -> Result<f64> {
     warn!("Could not parse coverage percentage from output");
     Ok(0.0)
 }
-

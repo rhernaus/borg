@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::code_generation::generator::CodeContext;
+use std::collections::HashMap;
 
 /// A prompt template manager for generating effective prompts
 pub struct PromptManager {
@@ -102,7 +102,8 @@ After the code blocks, provide a detailed explanation of:
 4. Any trade-offs or considerations for your implementation
 
 Be specific about memory safety, error handling, and performance implications.
-"#.to_string(),
+"#
+            .to_string(),
         );
 
         // Enhanced bug fix prompt
@@ -169,7 +170,8 @@ After the code blocks, provide a detailed explanation of:
 2. Root cause analysis
 3. How your changes fix the issue
 4. How to prevent similar bugs in the future
-"#.to_string(),
+"#
+            .to_string(),
         );
 
         // New feature implementation prompt
@@ -241,7 +243,8 @@ After the code blocks, provide a detailed explanation of:
 2. Key design decisions and alternatives considered
 3. How your implementation satisfies the requirements
 4. Any areas that might need further refinement
-"#.to_string(),
+"#
+            .to_string(),
         );
 
         // Refactoring prompt
@@ -306,7 +309,8 @@ After the code blocks, provide a detailed explanation of:
 2. How your changes improve the code
 3. What code quality aspects have been enhanced
 4. Any performance or safety improvements
-"#.to_string(),
+"#
+            .to_string(),
         );
 
         // Add template for Git operations
@@ -397,7 +401,8 @@ Remember to approach Git operations with care and maintain the integrity of the 
 
     /// Get the system message template
     pub fn create_system_message(&self) -> String {
-        self.templates.get("system_message")
+        self.templates
+            .get("system_message")
             .expect("System message template not found")
             .clone()
     }
@@ -418,7 +423,10 @@ Remember to approach Git operations with care and maintain the integrity of the 
             prompt = prompt.replace("{{requirements}}", requirements);
             prompt = prompt.replace("{{/if}}", "");
         } else {
-            prompt = prompt.replace("{{#if requirements}}\n## REQUIREMENTS:\n{{requirements}}\n{{/if}}", "");
+            prompt = prompt.replace(
+                "{{#if requirements}}\n## REQUIREMENTS:\n{{requirements}}\n{{/if}}",
+                "",
+            );
         }
 
         let file_paths = context.file_paths.join("\n");
@@ -467,7 +475,10 @@ Remember to approach Git operations with care and maintain the integrity of the 
             prompt = prompt.replace("{{requirements}}", requirements);
             prompt = prompt.replace("{{/if}}", "");
         } else {
-            prompt = prompt.replace("{{#if requirements}}\n## REQUIREMENTS:\n{{requirements}}\n{{/if}}", "");
+            prompt = prompt.replace(
+                "{{#if requirements}}\n## REQUIREMENTS:\n{{requirements}}\n{{/if}}",
+                "",
+            );
         }
 
         let file_paths = context.file_paths.join("\n");
@@ -515,7 +526,10 @@ Remember to approach Git operations with care and maintain the integrity of the 
             prompt = prompt.replace("{{requirements}}", requirements);
             prompt = prompt.replace("{{/if}}", "");
         } else {
-            prompt = prompt.replace("{{#if requirements}}\n## REQUIREMENTS:\n{{requirements}}\n{{/if}}", "");
+            prompt = prompt.replace(
+                "{{#if requirements}}\n## REQUIREMENTS:\n{{requirements}}\n{{/if}}",
+                "",
+            );
         }
 
         let file_paths = context.file_paths.join("\n");
@@ -563,7 +577,10 @@ Remember to approach Git operations with care and maintain the integrity of the 
             prompt = prompt.replace("{{requirements}}", requirements);
             prompt = prompt.replace("{{/if}}", "");
         } else {
-            prompt = prompt.replace("{{#if requirements}}\n## REQUIREMENTS:\n{{requirements}}\n{{/if}}", "");
+            prompt = prompt.replace(
+                "{{#if requirements}}\n## REQUIREMENTS:\n{{requirements}}\n{{/if}}",
+                "",
+            );
         }
 
         let file_paths = context.file_paths.join("\n");
@@ -606,7 +623,8 @@ Remember to approach Git operations with care and maintain the integrity of the 
 
     /// Add a custom template
     pub fn add_template(&mut self, name: &str, template: &str) {
-        self.templates.insert(name.to_string(), template.to_string());
+        self.templates
+            .insert(name.to_string(), template.to_string());
     }
 
     /// Get a template by name

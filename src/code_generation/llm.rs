@@ -1,25 +1,35 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::json;
-use std::time::{Duration, Instant};
-use std::sync::Arc;
 use std::io::{self, Write};
-use futures_util::StreamExt;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
+use crate::code_generation::llm_logging::LlmLogger;
 use crate::core::config::{LlmConfig, LlmLoggingConfig};
 use crate::core::error::BorgError;
-use crate::code_generation::llm_logging::LlmLogger;
 
 /// LLM provider trait
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
     /// Generate a text completion for the given prompt
-    async fn generate(&self, prompt: &str, max_tokens: Option<usize>, temperature: Option<f32>) -> Result<String>;
+    async fn generate(
+        &self,
+        prompt: &str,
+        max_tokens: Option<usize>,
+        temperature: Option<f32>,
+    ) -> Result<String>;
 
     /// Generate a text completion for the given prompt and stream the response to stdout
-    async fn generate_streaming(&self, prompt: &str, max_tokens: Option<usize>, temperature: Option<f32>) -> Result<String>;
+    async fn generate_streaming(
+        &self,
+        prompt: &str,
+        max_tokens: Option<usize>,
+        temperature: Option<f32>,
+    ) -> Result<String>;
 }
 
 /// Factory for creating the appropriate LLM provider
@@ -27,7 +37,10 @@ pub struct LlmFactory;
 
 impl LlmFactory {
     /// Create a new LLM provider based on configuration
-    pub fn create(config: LlmConfig, logging_config: LlmLoggingConfig) -> Result<Box<dyn LlmProvider>> {
+    pub fn create(
+        config: LlmConfig,
+        logging_config: LlmLoggingConfig,
+    ) -> Result<Box<dyn LlmProvider>> {
         match config.provider.as_str() {
             "openai" => Ok(Box::new(OpenAiProvider::new(config, logging_config)?)),
             "anthropic" => Ok(Box::new(AnthropicProvider::new(config, logging_config)?)),
@@ -36,7 +49,7 @@ impl LlmFactory {
             _ => Err(anyhow::anyhow!(BorgError::ConfigError(format!(
                 "Unsupported LLM provider: {}",
                 config.provider
-            ))))
+            )))),
         }
     }
 }
@@ -70,7 +83,12 @@ impl OpenAiProvider {
 
 #[async_trait]
 impl LlmProvider for OpenAiProvider {
-    async fn generate(&self, prompt: &str, max_tokens: Option<usize>, temperature: Option<f32>) -> Result<String> {
+    async fn generate(
+        &self,
+        prompt: &str,
+        max_tokens: Option<usize>,
+        temperature: Option<f32>,
+    ) -> Result<String> {
         let url = "https://api.openai.com/v1/chat/completions";
 
         let payload = json!({
@@ -97,21 +115,24 @@ impl LlmProvider for OpenAiProvider {
         // Track time for request duration
         let start_time = Instant::now();
 
-        let response = match self.client
+        let response = match self
+            .client
             .post(url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .json(&payload)
             .send()
-            .await {
-                Ok(resp) => resp,
-                Err(e) => {
-                    log::error!("Network error when contacting OpenAI API: {}", e);
-                    return Err(anyhow::anyhow!(BorgError::LlmApiError(format!(
-                        "Failed to send request to OpenAI API: {}", e
-                    ))));
-                }
-            };
+            .await
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                log::error!("Network error when contacting OpenAI API: {}", e);
+                return Err(anyhow::anyhow!(BorgError::LlmApiError(format!(
+                    "Failed to send request to OpenAI API: {}",
+                    e
+                ))));
+            }
+        };
 
         let status = response.status();
         if !status.is_success() {
@@ -143,7 +164,9 @@ impl LlmProvider for OpenAiProvider {
             content: String,
         }
 
-        let chat_response: ChatResponse = response.json().await
+        let chat_response: ChatResponse = response
+            .json()
+            .await
             .context("Failed to parse OpenAI API response")?;
 
         // Calculate request duration
@@ -153,15 +176,23 @@ impl LlmProvider for OpenAiProvider {
             let content = choice.message.content.clone();
 
             // Log the response
-            self.logger.log_response("OpenAI", &self.model, &content, duration)?;
+            self.logger
+                .log_response("OpenAI", &self.model, &content, duration)?;
 
             Ok(content)
         } else {
-            Err(anyhow::anyhow!(BorgError::LlmApiError("OpenAI API returned no choices".to_string())))
+            Err(anyhow::anyhow!(BorgError::LlmApiError(
+                "OpenAI API returned no choices".to_string()
+            )))
         }
     }
 
-    async fn generate_streaming(&self, prompt: &str, max_tokens: Option<usize>, temperature: Option<f32>) -> Result<String> {
+    async fn generate_streaming(
+        &self,
+        prompt: &str,
+        max_tokens: Option<usize>,
+        temperature: Option<f32>,
+    ) -> Result<String> {
         let url = "https://api.openai.com/v1/chat/completions";
 
         let payload = json!({
@@ -181,7 +212,10 @@ impl LlmProvider for OpenAiProvider {
             "stream": true  // Enable streaming
         });
 
-        log::debug!("Sending streaming request to OpenAI API with model: {}", self.model);
+        log::debug!(
+            "Sending streaming request to OpenAI API with model: {}",
+            self.model
+        );
 
         // Log the request
         self.logger.log_request("OpenAI", &self.model, prompt)?;
@@ -189,21 +223,24 @@ impl LlmProvider for OpenAiProvider {
         // Track time for request duration
         let start_time = Instant::now();
 
-        let response = match self.client
+        let response = match self
+            .client
             .post(url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .json(&payload)
             .send()
-            .await {
-                Ok(resp) => resp,
-                Err(e) => {
-                    log::error!("Network error when contacting OpenAI API: {}", e);
-                    return Err(anyhow::anyhow!(BorgError::LlmApiError(format!(
-                        "Failed to send request to OpenAI API: {}", e
-                    ))));
-                }
-            };
+            .await
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                log::error!("Network error when contacting OpenAI API: {}", e);
+                return Err(anyhow::anyhow!(BorgError::LlmApiError(format!(
+                    "Failed to send request to OpenAI API: {}",
+                    e
+                ))));
+            }
+        };
 
         let status = response.status();
         if !status.is_success() {
@@ -231,7 +268,8 @@ impl LlmProvider for OpenAiProvider {
                 Ok(chunk) => chunk,
                 Err(e) => {
                     return Err(anyhow::anyhow!(BorgError::LlmApiError(format!(
-                        "Error reading streaming response: {}", e
+                        "Error reading streaming response: {}",
+                        e
                     ))));
                 }
             };
@@ -270,13 +308,14 @@ impl LlmProvider for OpenAiProvider {
             }
         }
 
-        println!();  // Ensure a newline at the end
+        println!(); // Ensure a newline at the end
 
         // Calculate request duration
         let duration = start_time.elapsed().as_millis() as u64;
 
         // Log the response
-        self.logger.log_response("OpenAI", &self.model, &content, duration)?;
+        self.logger
+            .log_response("OpenAI", &self.model, &content, duration)?;
 
         Ok(content)
     }
@@ -311,7 +350,12 @@ impl AnthropicProvider {
 
 #[async_trait]
 impl LlmProvider for AnthropicProvider {
-    async fn generate(&self, prompt: &str, max_tokens: Option<usize>, temperature: Option<f32>) -> Result<String> {
+    async fn generate(
+        &self,
+        prompt: &str,
+        max_tokens: Option<usize>,
+        temperature: Option<f32>,
+    ) -> Result<String> {
         let url = "https://api.anthropic.com/v1/messages";
 
         let payload = json!({
@@ -332,7 +376,8 @@ impl LlmProvider for AnthropicProvider {
         // Track time for request duration
         let start_time = Instant::now();
 
-        let response = self.client
+        let response = self
+            .client
             .post(url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
@@ -344,7 +389,9 @@ impl LlmProvider for AnthropicProvider {
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await
+            let error_text = response
+                .text()
+                .await
                 .context("Failed to read error response from Anthropic API")?;
             return Err(anyhow::anyhow!(BorgError::LlmApiError(format!(
                 "Anthropic API returned error ({}): {}",
@@ -362,7 +409,9 @@ impl LlmProvider for AnthropicProvider {
             text: String,
         }
 
-        let anthropic_response: AnthropicResponse = response.json().await
+        let anthropic_response: AnthropicResponse = response
+            .json()
+            .await
             .context("Failed to parse Anthropic API response")?;
 
         // Calculate request duration
@@ -372,15 +421,23 @@ impl LlmProvider for AnthropicProvider {
             let content = block.text.clone();
 
             // Log the response
-            self.logger.log_response("Anthropic", &self.model, &content, duration)?;
+            self.logger
+                .log_response("Anthropic", &self.model, &content, duration)?;
 
             Ok(content)
         } else {
-            Err(anyhow::anyhow!(BorgError::LlmApiError("Anthropic API returned no content".to_string())))
+            Err(anyhow::anyhow!(BorgError::LlmApiError(
+                "Anthropic API returned no content".to_string()
+            )))
         }
     }
 
-    async fn generate_streaming(&self, prompt: &str, max_tokens: Option<usize>, temperature: Option<f32>) -> Result<String> {
+    async fn generate_streaming(
+        &self,
+        prompt: &str,
+        max_tokens: Option<usize>,
+        temperature: Option<f32>,
+    ) -> Result<String> {
         let url = "https://api.anthropic.com/v1/messages";
 
         let payload = json!({
@@ -396,7 +453,10 @@ impl LlmProvider for AnthropicProvider {
             "stream": true  // Enable streaming
         });
 
-        log::debug!("Sending streaming request to Anthropic API with model: {}", self.model);
+        log::debug!(
+            "Sending streaming request to Anthropic API with model: {}",
+            self.model
+        );
 
         // Log the request
         self.logger.log_request("Anthropic", &self.model, prompt)?;
@@ -404,7 +464,8 @@ impl LlmProvider for AnthropicProvider {
         // Track time for request duration
         let start_time = Instant::now();
 
-        let response = self.client
+        let response = self
+            .client
             .post(url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
@@ -416,7 +477,9 @@ impl LlmProvider for AnthropicProvider {
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await
+            let error_text = response
+                .text()
+                .await
                 .context("Failed to read error response from Anthropic API")?;
             return Err(anyhow::anyhow!(BorgError::LlmApiError(format!(
                 "Anthropic API returned error ({}): {}",
@@ -435,7 +498,8 @@ impl LlmProvider for AnthropicProvider {
                 Ok(chunk) => chunk,
                 Err(e) => {
                     return Err(anyhow::anyhow!(BorgError::LlmApiError(format!(
-                        "Error reading streaming response: {}", e
+                        "Error reading streaming response: {}",
+                        e
                     ))));
                 }
             };
@@ -467,13 +531,14 @@ impl LlmProvider for AnthropicProvider {
             }
         }
 
-        println!();  // Ensure a newline at the end
+        println!(); // Ensure a newline at the end
 
         // Calculate request duration
         let duration = start_time.elapsed().as_millis() as u64;
 
         // Log the response
-        self.logger.log_response("Anthropic", &self.model, &content, duration)?;
+        self.logger
+            .log_response("Anthropic", &self.model, &content, duration)?;
 
         Ok(content)
     }
@@ -554,7 +619,12 @@ impl MockLlmProvider {
 
 #[async_trait]
 impl LlmProvider for MockLlmProvider {
-    async fn generate(&self, prompt: &str, _max_tokens: Option<usize>, _temperature: Option<f32>) -> Result<String> {
+    async fn generate(
+        &self,
+        prompt: &str,
+        _max_tokens: Option<usize>,
+        _temperature: Option<f32>,
+    ) -> Result<String> {
         // Log the request
         self.logger.log_request("Mock", &self.model, prompt)?;
 
@@ -567,12 +637,18 @@ impl LlmProvider for MockLlmProvider {
         let duration = start_time.elapsed().as_millis() as u64;
 
         // Log the response
-        self.logger.log_response("Mock", &self.model, &response, duration)?;
+        self.logger
+            .log_response("Mock", &self.model, &response, duration)?;
 
         Ok(response)
     }
 
-    async fn generate_streaming(&self, prompt: &str, _max_tokens: Option<usize>, _temperature: Option<f32>) -> Result<String> {
+    async fn generate_streaming(
+        &self,
+        prompt: &str,
+        _max_tokens: Option<usize>,
+        _temperature: Option<f32>,
+    ) -> Result<String> {
         log::info!("Generating streaming mock response for prompt");
 
         // Log the request
@@ -604,13 +680,14 @@ impl LlmProvider for MockLlmProvider {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
 
-        println!();  // Ensure a newline at the end
+        println!(); // Ensure a newline at the end
 
         // Calculate request duration
         let duration = start_time.elapsed().as_millis() as u64;
 
         // Log the response
-        self.logger.log_response("Mock", &self.model, &content, duration)?;
+        self.logger
+            .log_response("Mock", &self.model, &content, duration)?;
 
         Ok(content)
     }

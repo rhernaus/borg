@@ -1,5 +1,5 @@
-use crate::core::planning::{Milestone, StrategicObjective, StrategicPlan};
 use crate::core::optimization::OptimizationGoal;
+use crate::core::planning::{Milestone, StrategicObjective, StrategicPlan};
 use crate::database::models::Entity;
 use serde::{Deserialize, Serialize};
 use std::marker::Unpin;

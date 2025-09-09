@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::prelude::*;
 use log::info;
-use std::fs::{self, File, create_dir_all};
+use std::fs::{self, create_dir_all, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -102,7 +102,13 @@ impl LlmLogger {
     }
 
     /// Log a response from an LLM
-    pub fn log_response(&self, provider: &str, model: &str, response: &str, duration_ms: u64) -> Result<()> {
+    pub fn log_response(
+        &self,
+        provider: &str,
+        model: &str,
+        response: &str,
+        duration_ms: u64,
+    ) -> Result<()> {
         if !self.config.enabled {
             return Ok(());
         }
@@ -145,10 +151,12 @@ impl LlmLogger {
                 io::Error::new(io::ErrorKind::Other, "Failed to acquire lock on log file")
             })?;
 
-            file_guard.write_all(text.as_bytes())
+            file_guard
+                .write_all(text.as_bytes())
                 .with_context(|| "Failed to write to log file")?;
 
-            file_guard.flush()
+            file_guard
+                .flush()
                 .with_context(|| "Failed to flush log file")?;
         }
 
@@ -169,10 +177,12 @@ impl LlmLogger {
             let entry = entry?;
             let path = entry.path();
 
-            if path.is_file() &&
-               path.extension().map_or(false, |ext| ext == "txt") &&
-               path.file_name().map_or(false, |name| name.to_string_lossy().starts_with("llm_log_")) {
-
+            if path.is_file()
+                && path.extension().map_or(false, |ext| ext == "txt")
+                && path
+                    .file_name()
+                    .map_or(false, |name| name.to_string_lossy().starts_with("llm_log_"))
+            {
                 let metadata = fs::metadata(&path)?;
                 log_files.push((path, metadata.modified()?));
             }
@@ -183,7 +193,10 @@ impl LlmLogger {
 
         // If there are more than the configured number of files, delete the oldest ones
         if log_files.len() > self.config.log_files_to_keep as usize {
-            for (path, _) in log_files.iter().skip(self.config.log_files_to_keep as usize) {
+            for (path, _) in log_files
+                .iter()
+                .skip(self.config.log_files_to_keep as usize)
+            {
                 fs::remove_file(path)
                     .with_context(|| format!("Failed to delete old log file: {:?}", path))?;
 

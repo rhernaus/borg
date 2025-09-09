@@ -1,18 +1,18 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
-use log::{info, LevelFilter, debug};
+use log::{debug, info, LevelFilter};
+use std::collections::HashMap;
+use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
-use std::fs;
-use std::env;
-use std::collections::HashMap;
 
+use borg::code_generation::llm_generator::LlmCodeGenerator;
 use borg::core::agent::Agent;
 use borg::core::config::Config;
 use borg::version_control::git::GitManager;
 use borg::version_control::git_implementation::GitImplementation;
-use borg::code_generation::llm_generator::LlmCodeGenerator;
 use serde::Deserialize;
 
 #[derive(Parser)]
@@ -143,9 +143,7 @@ fn main() -> Result<()> {
     } else {
         LevelFilter::Info
     };
-    env_logger::Builder::new()
-        .filter_level(log_level)
-        .init();
+    env_logger::Builder::new().filter_level(log_level).init();
 
     // Load configuration
     let config_path = determine_config_path(&cli.config)?;
@@ -165,15 +163,16 @@ fn main() -> Result<()> {
     if use_mock_llm {
         info!("Test mode: Using mock LLM provider");
         // Override LLM configuration with mock provider
-        config.llm = HashMap::from([
-            ("default".to_string(), borg::core::config::LlmConfig {
+        config.llm = HashMap::from([(
+            "default".to_string(),
+            borg::core::config::LlmConfig {
                 provider: "mock".to_string(),
                 api_key: "test-key".to_string(),
                 model: "test-model".to_string(),
                 max_tokens: 1024,
                 temperature: 0.7,
-            }),
-        ]);
+            },
+        )]);
     }
 
     // For the git operation command, we don't fully initialize the agent
@@ -182,7 +181,7 @@ fn main() -> Result<()> {
     match &cli.command {
         Some(Commands::GitOperation { .. }) => {
             // Handle git operation separately without moving config
-        },
+        }
         _ => {
             // Initialize the agent for other commands
             tokio::runtime::Builder::new_multi_thread()
@@ -205,7 +204,9 @@ fn main() -> Result<()> {
                 info!("Executing Git operation with query: {}", query);
 
                 // Get the LLM config
-                let llm_config = config.llm.get("code_generation")
+                let llm_config = config
+                    .llm
+                    .get("code_generation")
                     .or_else(|| config.llm.get("default"))
                     .ok_or_else(|| anyhow!("No suitable LLM configuration found"))?
                     .clone();
@@ -213,7 +214,7 @@ fn main() -> Result<()> {
                 // Create the git manager and code generator
                 let git_manager: Arc<TokioMutex<dyn GitManager>> = Arc::new(TokioMutex::new(
                     GitImplementation::new(&PathBuf::from(&config.agent.working_dir))
-                        .context("Failed to create git manager")?
+                        .context("Failed to create git manager")?,
                 ));
 
                 let code_generator = LlmCodeGenerator::new(
@@ -221,11 +222,13 @@ fn main() -> Result<()> {
                     config.code_generation.clone(),
                     config.llm_logging.clone(),
                     Arc::clone(&git_manager),
-                    PathBuf::from(&config.agent.working_dir)
+                    PathBuf::from(&config.agent.working_dir),
                 )?;
 
                 // Generate response
-                let response = code_generator.generate_git_operations_response(&query).await?;
+                let response = code_generator
+                    .generate_git_operations_response(&query)
+                    .await?;
 
                 println!("Git Operation Result:\n{}", response);
 
@@ -261,10 +264,10 @@ fn determine_config_path(cli_config: &str) -> Result<std::path::PathBuf> {
 
 /// Load lines from a file, trimming whitespace
 fn load_lines_from_file(path: &PathBuf) -> Result<Vec<String>> {
-    let content = fs::read_to_string(path)
-        .context(format!("Failed to read file: {:?}", path))?;
+    let content = fs::read_to_string(path).context(format!("Failed to read file: {:?}", path))?;
 
-    Ok(content.lines()
+    Ok(content
+        .lines()
         .map(|line| line.trim().to_string())
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .collect())
@@ -285,34 +288,45 @@ fn print_banner() {
 
 /// Handle the Ask command with streaming option
 async fn handle_ask_command(prompt: String, stream: bool, agent: &Agent) -> Result<()> {
-    info!("Processing Ask command with prompt: {}, streaming: {}", prompt, stream);
+    info!(
+        "Processing Ask command with prompt: {}, streaming: {}",
+        prompt, stream
+    );
 
     // Get access to the config
     let config = agent.get_config();
 
     // Get an LLM configuration - first try default, then code_generation, then any available one
-    let llm_config = config.llm.get("default")
+    let llm_config = config
+        .llm
+        .get("default")
         .or_else(|| config.llm.get("code_generation"))
         .or_else(|| config.llm.values().next())
         .ok_or_else(|| anyhow!("No LLM configuration found"))?
         .clone();
 
-    info!("Using LLM provider: {} with model: {}", llm_config.provider, llm_config.model);
+    info!(
+        "Using LLM provider: {} with model: {}",
+        llm_config.provider, llm_config.model
+    );
 
     // Create an LLM provider using the configuration
-    let llm_provider = borg::code_generation::llm::LlmFactory::create(
-        llm_config,
-        config.llm_logging.clone(),
-    )?;
+    let llm_provider =
+        borg::code_generation::llm::LlmFactory::create(llm_config, config.llm_logging.clone())?;
 
     // Generate a response based on the user's choice
     if stream {
         info!("Using streaming mode for response");
-        let response = llm_provider.generate_streaming(&prompt, None, Some(0.7)).await?;
+        let response = llm_provider
+            .generate_streaming(&prompt, None, Some(0.7))
+            .await?;
 
         // The streaming implementation already prints to stdout as it receives tokens,
         // so we don't need to print anything else here
-        info!("Streaming response completed with {} characters", response.len());
+        info!(
+            "Streaming response completed with {} characters",
+            response.len()
+        );
     } else {
         info!("Using non-streaming mode for response");
         let response = llm_provider.generate(&prompt, None, Some(0.7)).await?;
@@ -329,24 +343,35 @@ async fn handle_commands(command: Option<Commands>, mut agent: Agent) -> Result<
         None => {
             println!("Running in default mode...");
             agent.run().await
-        },
+        }
         Some(Commands::Improve) => {
             println!("Running a single improvement iteration...");
             agent.run_improvement_iteration().await
-        },
+        }
         Some(Commands::Info) => {
             print_banner();
             let version = env!("CARGO_PKG_VERSION");
             println!("Version: {}", version);
-            println!("Working directory: {}", agent.get_config().agent.working_dir);
+            println!(
+                "Working directory: {}",
+                agent.get_config().agent.working_dir
+            );
 
             // Display active goals
             let goal_count = agent.get_active_goal_count().await?;
             println!("Active goals: {}", goal_count);
 
             Ok(())
-        },
-        Some(Commands::Objective(ObjectiveCommands::Add { id, title, description, timeframe, creator, key_results_file, constraints_file })) => {
+        }
+        Some(Commands::Objective(ObjectiveCommands::Add {
+            id,
+            title,
+            description,
+            timeframe,
+            creator,
+            key_results_file,
+            constraints_file,
+        })) => {
             println!("Adding strategic objective: {} - {}", id, title);
 
             // Load key results if file is provided
@@ -364,20 +389,22 @@ async fn handle_commands(command: Option<Commands>, mut agent: Agent) -> Result<
             };
 
             // Add the strategic objective with individual parameters
-            agent.add_strategic_objective(
-                &id,
-                &title,
-                &description,
-                timeframe,
-                &creator,
-                key_results,
-                constraints
-            ).await?;
+            agent
+                .add_strategic_objective(
+                    &id,
+                    &title,
+                    &description,
+                    timeframe,
+                    &creator,
+                    key_results,
+                    constraints,
+                )
+                .await?;
 
             println!("Strategic objective added successfully");
 
             Ok(())
-        },
+        }
         Some(Commands::Objective(ObjectiveCommands::List)) => {
             let objectives = agent.list_strategic_objectives().await;
 
@@ -396,14 +423,14 @@ async fn handle_commands(command: Option<Commands>, mut agent: Agent) -> Result<
             }
 
             Ok(())
-        },
+        }
         Some(Commands::Plan(PlanCommands::Generate)) => {
             println!("Generating strategic plan...");
             agent.generate_strategic_plan().await?;
             println!("Strategic plan generated successfully");
 
             Ok(())
-        },
+        }
         Some(Commands::Plan(PlanCommands::Show)) => {
             let plan_option = agent.get_current_strategic_plan().await;
 
@@ -411,7 +438,10 @@ async fn handle_commands(command: Option<Commands>, mut agent: Agent) -> Result<
                 Some(plan) => {
                     println!("Strategic Plan:");
                     println!("Created: {}", plan.created_at.format("%Y-%m-%d %H:%M:%S"));
-                    println!("Last Updated: {}", plan.updated_at.format("%Y-%m-%d %H:%M:%S"));
+                    println!(
+                        "Last Updated: {}",
+                        plan.updated_at.format("%Y-%m-%d %H:%M:%S")
+                    );
 
                     println!("\nObjectives:");
                     for objective in &plan.objectives {
@@ -422,43 +452,52 @@ async fn handle_commands(command: Option<Commands>, mut agent: Agent) -> Result<
                     for milestone in &plan.milestones {
                         println!("- {} ({}% complete)", milestone.title, milestone.progress);
                     }
-                },
+                }
                 None => {
                     println!("No active strategic plan found.");
                 }
             }
 
             Ok(())
-        },
+        }
         Some(Commands::Plan(PlanCommands::Report)) => {
             println!("Generating progress report...");
             let report = agent.generate_progress_report().await?;
             println!("{}", report);
 
             Ok(())
-        },
+        }
         Some(Commands::LoadObjectives { objectives_file }) => {
-            println!("Loading strategic objectives from file: {:?}", objectives_file);
+            println!(
+                "Loading strategic objectives from file: {:?}",
+                objectives_file
+            );
 
-            let file_content = fs::read_to_string(&objectives_file)
-                .context(format!("Failed to read objectives file: {:?}", objectives_file))?;
+            let file_content = fs::read_to_string(&objectives_file).context(format!(
+                "Failed to read objectives file: {:?}",
+                objectives_file
+            ))?;
 
-            let config: ObjectivesConfig = toml::from_str(&file_content)
-                .context(format!("Failed to parse objectives file: {:?}", objectives_file))?;
+            let config: ObjectivesConfig = toml::from_str(&file_content).context(format!(
+                "Failed to parse objectives file: {:?}",
+                objectives_file
+            ))?;
 
             println!("Found {} objectives in file", config.objectives.len());
 
             for obj in config.objectives {
                 // Add each strategic objective with individual parameters
-                agent.add_strategic_objective(
-                    &obj.id,
-                    &obj.title,
-                    &obj.description,
-                    obj.timeframe,
-                    &obj.creator,
-                    obj.key_results,
-                    obj.constraints
-                ).await?;
+                agent
+                    .add_strategic_objective(
+                        &obj.id,
+                        &obj.title,
+                        &obj.description,
+                        obj.timeframe,
+                        &obj.creator,
+                        obj.key_results,
+                        obj.constraints,
+                    )
+                    .await?;
 
                 println!("Added objective: {}", obj.id);
             }
@@ -466,13 +505,11 @@ async fn handle_commands(command: Option<Commands>, mut agent: Agent) -> Result<
             println!("All objectives loaded successfully");
 
             Ok(())
-        },
+        }
         Some(Commands::GitOperation { .. }) => {
             // This is handled separately in main.rs
             unreachable!("Git operation should be handled separately");
-        },
-        Some(Commands::Ask { prompt, stream }) => {
-            handle_ask_command(prompt, stream, &agent).await
-        },
+        }
+        Some(Commands::Ask { prompt, stream }) => handle_ask_command(prompt, stream, &agent).await,
     }
 }
