@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use log::{info, warn};
+use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 use sysinfo::System;
@@ -77,6 +77,12 @@ pub struct SystemResourceMonitor {
 
     /// Monitoring interval
     monitoring_interval: Option<Duration>,
+
+    /// Maximum memory threshold in megabytes for critical classification
+    memory_threshold_mb: f64,
+
+    /// Maximum CPU usage percentage threshold for critical classification
+    cpu_threshold_percent: f64,
 }
 
 impl Default for SystemResourceMonitor {
@@ -100,6 +106,32 @@ impl SystemResourceMonitor {
             peak_memory_mb: 0.0,
             is_monitoring: false,
             monitoring_interval: None,
+            memory_threshold_mb: 0.0,
+            cpu_threshold_percent: 0.0,
+        }
+    }
+
+    /// Create a new system resource monitor with explicit limits
+    pub fn with_limits(limits: ResourceLimits) -> Self {
+        let mut system = System::new_all();
+        system.refresh_all();
+
+        let current_pid = std::process::id();
+
+        debug!(
+            "SystemResourceMonitor thresholds set: memory={}MB, cpu={}%, disk={:?}",
+            limits.max_memory_mb, limits.max_cpu_percent, limits.max_disk_mb
+        );
+
+        Self {
+            system,
+            pid: Some(current_pid),
+            start_time: Instant::now(),
+            peak_memory_mb: 0.0,
+            is_monitoring: false,
+            monitoring_interval: None,
+            memory_threshold_mb: limits.max_memory_mb,
+            cpu_threshold_percent: limits.max_cpu_percent,
         }
     }
 
@@ -133,14 +165,8 @@ impl ResourceMonitor for SystemResourceMonitor {
 
         let disk_usage = None; // would be implemented in a real system
 
-        let is_critical = memory_mb > self.peak_memory_mb * 1.5 || cpu_percent > 95.0;
-
-        if is_critical {
-            warn!(
-                "Critical resource usage detected: memory={:.2}MB, CPU={:.2}%",
-                memory_mb, cpu_percent
-            );
-        }
+        let is_critical = (self.memory_threshold_mb > 0.0 && memory_mb >= self.memory_threshold_mb)
+            || (self.cpu_threshold_percent > 0.0 && cpu_percent >= self.cpu_threshold_percent);
 
         Ok(ResourceUsage {
             memory_usage_mb: memory_mb,

@@ -41,6 +41,16 @@ pub trait GitManager: Send + Sync {
 
     /// Read a file from the repository
     async fn read_file(&self, file_path: &str) -> Result<String>;
+
+    /// Create a git worktree at the given path for the specified branch
+    /// If the branch doesn't exist, it will be created from HEAD
+    async fn create_worktree(&self, branch: &str, path: &Path) -> Result<()>;
+
+    /// Remove a git worktree and clean up references
+    async fn remove_worktree(&self, path: &Path) -> Result<()>;
+
+    /// List all active worktrees (returns paths to worktree directories)
+    async fn list_worktrees(&self) -> Result<Vec<PathBuf>>;
 }
 
 /// Git manager implementation using libgit2
@@ -440,5 +450,150 @@ impl GitManager for LibGitManager {
             .with_context(|| format!("Failed to read file: {}", file_path))?;
 
         Ok(content)
+    }
+
+    async fn create_worktree(&self, branch: &str, path: &Path) -> Result<()> {
+        let repo = self.open_repo()?;
+
+        // Check if worktree path already exists
+        if path.exists() {
+            return Err(anyhow::anyhow!(BorgError::GitError(format!(
+                "Worktree path already exists: {:?}",
+                path
+            ))));
+        }
+
+        // Check if the branch exists
+        let branch_exists = repo.find_branch(branch, BranchType::Local).is_ok();
+
+        if branch_exists {
+            // Branch exists, create worktree for it
+            let branch_ref = format!("refs/heads/{}", branch);
+
+            // Use git2's worktree API to add a new worktree
+            repo.worktree(
+                branch,
+                path,
+                Some(
+                    git2::WorktreeAddOptions::new()
+                        .reference(Some(&repo.find_reference(&branch_ref)?)),
+                ),
+            )
+            .with_context(|| {
+                format!(
+                    "Failed to create worktree at {:?} for branch '{}'",
+                    path, branch
+                )
+            })?;
+
+            info!(
+                "Created worktree at {:?} for existing branch '{}'",
+                path, branch
+            );
+        } else {
+            // Branch doesn't exist, create it from HEAD first
+            let head = repo.head().context("Failed to get repository HEAD")?;
+            let commit = head
+                .peel_to_commit()
+                .context("Failed to peel HEAD to commit")?;
+
+            // Create the new branch
+            let new_branch = repo
+                .branch(branch, &commit, false)
+                .with_context(|| format!("Failed to create branch '{}'", branch))?;
+
+            info!("Created new branch '{}' from HEAD", branch);
+
+            // Now create the worktree for this new branch
+            let branch_ref = new_branch.get();
+
+            repo.worktree(
+                branch,
+                path,
+                Some(git2::WorktreeAddOptions::new().reference(Some(branch_ref))),
+            )
+            .with_context(|| {
+                format!(
+                    "Failed to create worktree at {:?} for new branch '{}'",
+                    path, branch
+                )
+            })?;
+
+            info!("Created worktree at {:?} for new branch '{}'", path, branch);
+        }
+
+        Ok(())
+    }
+
+    async fn remove_worktree(&self, path: &Path) -> Result<()> {
+        let repo = self.open_repo()?;
+
+        // Find the worktree by path
+        let worktree_name = path.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+            anyhow::anyhow!(BorgError::GitError(format!(
+                "Invalid worktree path: {:?}",
+                path
+            )))
+        })?;
+
+        // Get the worktree
+        let worktree = repo
+            .find_worktree(worktree_name)
+            .with_context(|| format!("Failed to find worktree: {}", worktree_name))?;
+
+        // Validate the worktree
+        if let Err(e) = worktree.validate() {
+            info!(
+                "Worktree '{}' validation failed ({}), will attempt removal anyway",
+                worktree_name, e
+            );
+        }
+
+        // Remove the worktree directory if it exists
+        if path.exists() {
+            std::fs::remove_dir_all(path)
+                .with_context(|| format!("Failed to remove worktree directory: {:?}", path))?;
+            info!("Removed worktree directory: {:?}", path);
+        }
+
+        // Prune the worktree reference from git using the Worktree::prune method
+        worktree
+            .prune(Some(git2::WorktreePruneOptions::new().valid(true)))
+            .with_context(|| format!("Failed to prune worktree: {}", worktree_name))?;
+
+        info!("Pruned worktree reference: {}", worktree_name);
+        Ok(())
+    }
+
+    async fn list_worktrees(&self) -> Result<Vec<PathBuf>> {
+        let repo = self.open_repo()?;
+
+        // Get the list of worktree names
+        let worktree_names = repo.worktrees().context("Failed to list worktrees")?;
+
+        let mut worktree_paths = Vec::new();
+
+        // The main repository is always a worktree
+        worktree_paths.push(self.repo_path.clone());
+
+        // Iterate through worktree names and get their paths
+        for name in worktree_names.iter().flatten() {
+            // Find the worktree and get its path
+            match repo.find_worktree(name) {
+                Ok(worktree) => {
+                    if let Some(path) = worktree.path().parent() {
+                        // worktree.path() returns the .git file path,
+                        // we want the parent directory which is the actual worktree
+                        worktree_paths.push(path.to_path_buf());
+                    }
+                }
+                Err(e) => {
+                    info!("Skipping worktree '{}': {}", name, e);
+                    continue;
+                }
+            }
+        }
+
+        Ok(worktree_paths)
     }
 }

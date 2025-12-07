@@ -5,11 +5,16 @@
 
 # Default LLM configuration (used as fallback)
 [llm.default]
-provider = "openai"
-api_key = "your-openai-api-key-here"
-model = "gpt-4o"
+provider = "openrouter"
+api_key = "your-openrouter-api-key-here"  # Or set OPENROUTER_API_KEY env var
+model = "openrouter/auto"
 max_tokens = 2048
 temperature = 0.0
+api_base = "https://openrouter.ai/api/v1"
+# Optional headers for OpenRouter (uncomment to use)
+# [llm.default.headers]
+# HTTP-Referer = "https://your.app"
+# X-Title = "Your App Name"
 
 # Code Generation LLM (specialized for writing high-quality code)
 [llm.code_generation]
@@ -89,6 +94,15 @@ api_keys = [
     # "another-api-key-for-service-account",
 ]
 
+# Code generation configuration
+[code_generation]
+candidate_count = 1          # Number of parallel candidates (1 for MVP)
+max_retries = 3              # Retry attempts if all candidates fail
+use_worktrees = true         # Use git worktrees for isolation
+rating_enabled = false       # Enable multi-LLM rating (false for MVP)
+tdd_enabled = true           # Enable TDD flow: spec → tests → implement
+max_implementation_retries = 3  # Retries for implementation (tests stay fixed)
+
 # Session configuration
 session_timeout_seconds = 3600        # 1 hour session timeout
 max_sessions_per_key = 5              # Maximum concurrent sessions per API key
@@ -99,8 +113,7 @@ rate_limit_per_minute = 100           # Requests per minute per API key
 
 # Security policies
 require_authentication = true         # CRITICAL: Must be true for production
-default_role = "Developer"            # Default role for authenticated users
-                                     # Options: "User", "Developer", "Administrator", "Creator"
+default_role = "Developer"            # Options: "User", "Developer", "Administrator", "Creator"
 
 # Failed authentication protection
 max_failed_attempts = 5               # Lock out after 5 failed attempts
@@ -110,12 +123,12 @@ lockout_duration_seconds = 900        # 15 minute lockout period
 log_auth_events = true                # Log all authentication events
 auth_log_dir = "./logs/auth"         # Directory for authentication logs
 
-# 🚨 SECURITY NOTES:
-# 1. NEVER commit real API keys to version control
-# 2. Use environment variables for production API keys:
-#    api_keys = ["${BORG_API_KEY_1}", "${BORG_API_KEY_2}"]
-# 3. Set require_authentication = true in production
-# 4. Generate cryptographically secure API keys (min 32 characters)
-# 5. Rotate API keys regularly
-# 6. Monitor authentication logs for suspicious activity
-# 7. Use HTTPS when deploying over network
+# -----------------------------------------------------------------------------
+# Example: OpenAI provider (commented-out)
+# -----------------------------------------------------------------------------
+# [llm.default]
+# provider = "openai"
+# api_key = "your-openai-api-key-here"
+# model = "gpt-4o"
+# max_tokens = 2048
+# temperature = 0.0

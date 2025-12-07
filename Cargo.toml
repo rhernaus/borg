@@ -11,7 +11,8 @@ default-run = "borg"
 # For async runtime
 tokio = { version = "1.47.1", features = ["full"] }
 # For HTTP requests to LLM APIs
-reqwest = { version = "0.12.23", features = ["json", "stream"] }
+# Enable blocking client to support synchronous catalog fetch in model selection service
+reqwest = { version = "0.12.23", features = ["json", "stream", "blocking"] }
 # JSON serialization/deserialization
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.143"
@@ -60,3 +61,4 @@ walkdir = "2.5.0"
 proptest = "1.7.0"
 mockall = "0.13.1"
 tempfile = "3.21.0"
+httpmock = "0.7.0"

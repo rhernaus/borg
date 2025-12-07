@@ -47,3 +47,78 @@ pub enum BorgError {
     #[error("Command execution failed: {0}")]
     CommandError(String),
 }
+
+/// Normalized provider-layer errors
+#[derive(Error, Debug, Clone)]
+pub enum ProviderError {
+    #[error("Invalid parameters: {message}")]
+    InvalidParams {
+        details: Option<String>,
+        #[cfg_attr(not(debug_assertions), allow(dead_code))]
+        code: Option<String>,
+        message: String,
+        status: Option<u16>,
+    },
+
+    #[error("Rate limited: {message}")]
+    RateLimited {
+        details: Option<String>,
+        code: Option<String>,
+        message: String,
+        status: Option<u16>,
+        retry_after_ms: Option<u64>,
+    },
+
+    #[error("Authentication error: {message}")]
+    Auth {
+        details: Option<String>,
+        code: Option<String>,
+        message: String,
+        status: Option<u16>,
+    },
+
+    #[error("Model unavailable: {message}")]
+    ModelUnavailable {
+        details: Option<String>,
+        code: Option<String>,
+        message: String,
+        status: Option<u16>,
+    },
+
+    #[error("Provider outage: {message}")]
+    ProviderOutage {
+        details: Option<String>,
+        code: Option<String>,
+        message: String,
+        status: Option<u16>,
+    },
+
+    #[error("Server error: {message}")]
+    ServerError {
+        details: Option<String>,
+        code: Option<String>,
+        message: String,
+        status: Option<u16>,
+    },
+
+    #[error("Streaming timeout waiting for first token after {timeout_ms} ms")]
+    TimeoutFirstToken { timeout_ms: u64 },
+
+    #[error("Streaming stalled for {timeout_ms} ms")]
+    TimeoutStall { timeout_ms: u64 },
+
+    #[error("Network error: {message}")]
+    Network { message: String },
+}
+
+impl ProviderError {
+    /// Convenience to construct an InvalidParams error
+    pub fn invalid_params(message: impl Into<String>, status: Option<u16>) -> Self {
+        ProviderError::InvalidParams {
+            details: None,
+            code: None,
+            message: message.into(),
+            status,
+        }
+    }
+}

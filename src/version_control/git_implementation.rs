@@ -111,17 +111,48 @@ impl GitManager for GitImplementation {
         let mut index = repo.index()?;
 
         for path in file_paths {
-            // Convert to relative path if needed
-            let rel_path = if path.is_absolute() {
-                path.strip_prefix(&self.repo_path)
+            // Derive a repo-relative path:
+            // - If absolute, diff it against repo root.
+            // - If relative, start from it as-is.
+            let rel_initial = if path.is_absolute() {
+                pathdiff::diff_paths(path, &self.repo_path)
                     .with_context(|| format!("Path is outside repository: {:?}", path))?
             } else {
-                path
+                path.to_path_buf()
             };
 
+            // Normalize by dropping "./" segments
+            let mut cleaned = std::path::PathBuf::new();
+            for comp in rel_initial.components() {
+                if let std::path::Component::CurDir = comp {
+                    continue;
+                }
+                cleaned.push(comp.as_os_str());
+            }
+
+            // If first component equals the repo directory name (e.g., "workspace"),
+            // strip it so we feed a true path relative to the repo root to libgit2.
+            if let Some(repo_name) = self.repo_path.file_name() {
+                if let Some(first) = cleaned.components().next() {
+                    if matches!(first, std::path::Component::Normal(n) if n == repo_name) {
+                        if let Ok(stripped) = cleaned.strip_prefix(repo_name) {
+                            cleaned = stripped.to_path_buf();
+                        }
+                    }
+                }
+            }
+
+            // Final sanity check
+            if cleaned.as_os_str().is_empty() {
+                return Err(anyhow!(BorgError::GitError(format!(
+                    "Computed empty relative path for {:?}",
+                    path
+                ))));
+            }
+
             index
-                .add_path(rel_path)
-                .with_context(|| format!("Failed to add file to index: {:?}", rel_path))?;
+                .add_path(&cleaned)
+                .with_context(|| format!("Failed to add file to index: {:?}", cleaned))?;
         }
 
         index.write()?;
@@ -395,5 +426,150 @@ impl GitManager for GitImplementation {
             .with_context(|| format!("Failed to read file: {}", file_path))?;
 
         Ok(content)
+    }
+
+    async fn create_worktree(&self, branch: &str, path: &Path) -> Result<()> {
+        let repo = self.open_repo()?;
+
+        // Check if worktree path already exists
+        if path.exists() {
+            return Err(anyhow!(BorgError::GitError(format!(
+                "Worktree path already exists: {:?}",
+                path
+            ))));
+        }
+
+        // Check if the branch exists
+        let branch_exists = repo.find_branch(branch, BranchType::Local).is_ok();
+
+        if branch_exists {
+            // Branch exists, create worktree for it
+            let branch_ref = format!("refs/heads/{}", branch);
+
+            // Use git2's worktree API to add a new worktree
+            repo.worktree(
+                branch,
+                path,
+                Some(
+                    git2::WorktreeAddOptions::new()
+                        .reference(Some(&repo.find_reference(&branch_ref)?)),
+                ),
+            )
+            .with_context(|| {
+                format!(
+                    "Failed to create worktree at {:?} for branch '{}'",
+                    path, branch
+                )
+            })?;
+
+            info!(
+                "Created worktree at {:?} for existing branch '{}'",
+                path, branch
+            );
+        } else {
+            // Branch doesn't exist, create it from HEAD first
+            let head = repo.head().context("Failed to get repository HEAD")?;
+            let commit = head
+                .peel_to_commit()
+                .context("Failed to peel HEAD to commit")?;
+
+            // Create the new branch
+            let new_branch = repo
+                .branch(branch, &commit, false)
+                .with_context(|| format!("Failed to create branch '{}'", branch))?;
+
+            info!("Created new branch '{}' from HEAD", branch);
+
+            // Now create the worktree for this new branch
+            let branch_ref = new_branch.get();
+
+            repo.worktree(
+                branch,
+                path,
+                Some(git2::WorktreeAddOptions::new().reference(Some(branch_ref))),
+            )
+            .with_context(|| {
+                format!(
+                    "Failed to create worktree at {:?} for new branch '{}'",
+                    path, branch
+                )
+            })?;
+
+            info!("Created worktree at {:?} for new branch '{}'", path, branch);
+        }
+
+        Ok(())
+    }
+
+    async fn remove_worktree(&self, path: &Path) -> Result<()> {
+        let repo = self.open_repo()?;
+
+        // Find the worktree by path
+        let worktree_name = path.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+            anyhow!(BorgError::GitError(format!(
+                "Invalid worktree path: {:?}",
+                path
+            )))
+        })?;
+
+        // Get the worktree
+        let worktree = repo
+            .find_worktree(worktree_name)
+            .with_context(|| format!("Failed to find worktree: {}", worktree_name))?;
+
+        // Validate the worktree
+        if let Err(e) = worktree.validate() {
+            info!(
+                "Worktree '{}' validation failed ({}), will attempt removal anyway",
+                worktree_name, e
+            );
+        }
+
+        // Remove the worktree directory if it exists
+        if path.exists() {
+            fs::remove_dir_all(path)
+                .with_context(|| format!("Failed to remove worktree directory: {:?}", path))?;
+            info!("Removed worktree directory: {:?}", path);
+        }
+
+        // Prune the worktree reference from git using the Worktree::prune method
+        worktree
+            .prune(Some(git2::WorktreePruneOptions::new().valid(true)))
+            .with_context(|| format!("Failed to prune worktree: {}", worktree_name))?;
+
+        info!("Pruned worktree reference: {}", worktree_name);
+        Ok(())
+    }
+
+    async fn list_worktrees(&self) -> Result<Vec<PathBuf>> {
+        let repo = self.open_repo()?;
+
+        // Get the list of worktree names
+        let worktree_names = repo.worktrees().context("Failed to list worktrees")?;
+
+        let mut worktree_paths = Vec::new();
+
+        // The main repository is always a worktree
+        worktree_paths.push(self.repo_path.clone());
+
+        // Iterate through worktree names and get their paths
+        for name in worktree_names.iter().flatten() {
+            // Find the worktree and get its path
+            match repo.find_worktree(name) {
+                Ok(worktree) => {
+                    if let Some(path) = worktree.path().parent() {
+                        // worktree.path() returns the .git file path,
+                        // we want the parent directory which is the actual worktree
+                        worktree_paths.push(path.to_path_buf());
+                    }
+                }
+                Err(e) => {
+                    info!("Skipping worktree '{}': {}", name, e);
+                    continue;
+                }
+            }
+        }
+
+        Ok(worktree_paths)
     }
 }

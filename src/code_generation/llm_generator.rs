@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use log::info;
+use log::{info, warn};
 use regex::Regex;
+use serde_json::{json, Value as JsonValue};
 use std::collections::HashMap;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -13,16 +15,25 @@ use crate::code_generation::llm::{LlmFactory, LlmProvider};
 use crate::code_generation::llm_tool::{
     CodeSearchTool, CompilationFeedbackTool, CreateFileTool, DirectoryExplorationTool,
     FileContentsTool, FindTestsTool, GitCommandTool, GitHistoryTool, LlmTool, ModifyFileTool,
-    ToolCall, ToolRegistry, ToolResult,
+    TestRunnerTool, ToolCall, ToolRegistry, ToolResult,
 };
 use crate::code_generation::prompt::PromptManager;
 use crate::core::config::{CodeGenerationConfig, LlmConfig, LlmLoggingConfig};
+use crate::core::error::ProviderError;
+use crate::providers::{
+    ContentPart as UnifiedContentPart, GenerateRequest as UnifiedGenerateRequest,
+    Message as UnifiedMessage, Provider as UnifiedProvider, Role as UnifiedRole, StreamEvent,
+    ToolCallNormalized, ToolChoice as UnifiedToolChoice, ToolSpec as UnifiedToolSpec, Usage,
+};
 use crate::version_control::git::GitManager;
 
 /// A code generator that uses LLM to generate code improvements
 pub struct LlmCodeGenerator {
     /// The LLM provider
     llm: Box<dyn LlmProvider>,
+
+    /// Unified provider adapter (when available; used for streaming with events/tool-calls)
+    provider_adapter: Option<Box<dyn UnifiedProvider>>,
 
     /// The prompt manager
     prompt_manager: PromptManager,
@@ -52,8 +63,23 @@ impl LlmCodeGenerator {
         git_manager: Arc<Mutex<dyn GitManager>>,
         workspace: PathBuf,
     ) -> Result<Self> {
+        let llm_cfg_clone = llm_config.clone();
         let llm = LlmFactory::create(llm_config, llm_logging_config)
             .context("Failed to create LLM provider")?;
+
+        // Create unified provider adapter when available (Anthropic/OpenRouter)
+        let provider_adapter: Option<Box<dyn UnifiedProvider>> =
+            match llm_cfg_clone.provider.as_str() {
+                "anthropic" => Some(Box::new(
+                    crate::providers::anthropic::AnthropicProvider::from_config(&llm_cfg_clone)
+                        .map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                )),
+                "openrouter" => Some(Box::new(
+                    crate::providers::openrouter::OpenRouterProvider::from_config(&llm_cfg_clone)
+                        .map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                )),
+                _ => None,
+            };
 
         let prompt_manager = PromptManager::new();
 
@@ -80,9 +106,11 @@ impl LlmCodeGenerator {
         tool_registry.register(CreateFileTool::new(workspace.clone()));
         tool_registry.register(ModifyFileTool::new(workspace.clone()));
         tool_registry.register(GitCommandTool::new(workspace.clone()));
+        tool_registry.register(TestRunnerTool::new(workspace.clone()));
 
         Ok(Self {
             llm,
+            provider_adapter,
             prompt_manager,
             git_manager,
             workspace,
@@ -170,7 +198,249 @@ impl LlmCodeGenerator {
         }
     }
 
+    /// Build provider tool specifications based on registered tools (JSON schema)
+    fn build_unified_tool_specs(&self) -> Vec<UnifiedToolSpec> {
+        let mut out = Vec::new();
+        for (name, description, params) in self.tool_registry.get_tool_specifications() {
+            // Build a simple JSON schema for parameters in declared order
+            let mut schema_obj = serde_json::Map::new();
+            schema_obj.insert("type".into(), JsonValue::String("object".into()));
+
+            let mut properties = serde_json::Map::new();
+            let mut required: Vec<String> = Vec::new();
+            for p in params {
+                // Best-effort type mapping
+                let typ = "string"; // keep string; tools parse internally
+                let mut prop = serde_json::Map::new();
+                prop.insert("type".into(), JsonValue::String(typ.to_string()));
+                if let Some(def) = p.default_value {
+                    prop.insert("default".into(), JsonValue::String(def));
+                }
+                properties.insert(p.name.clone(), JsonValue::Object(prop));
+                if p.required {
+                    required.push(p.name.clone());
+                }
+            }
+            schema_obj.insert("properties".into(), JsonValue::Object(properties));
+            if !required.is_empty() {
+                schema_obj.insert(
+                    "required".into(),
+                    JsonValue::Array(required.into_iter().map(JsonValue::String).collect()),
+                );
+            }
+
+            out.push(UnifiedToolSpec {
+                name,
+                description: Some(description),
+                json_schema: Some(JsonValue::Object(schema_obj)),
+            });
+        }
+        out
+    }
+
+    /// Map a normalized tool call to ToolRegistry argument list, using parameter specs
+    fn map_normalized_tool_to_args(&self, tc: &ToolCallNormalized) -> Vec<String> {
+        let mut args: Vec<String> = Vec::new();
+        let mut params_for_tool: Option<Vec<crate::code_generation::llm_tool::ToolParameter>> =
+            None;
+        for (n, _desc, params) in self.tool_registry.get_tool_specifications() {
+            if n == tc.name {
+                params_for_tool = Some(params);
+                break;
+            }
+        }
+        if let Some(params) = params_for_tool {
+            for p in params {
+                if let Some(v) = tc.arguments_json.get(&p.name) {
+                    if let Some(s) = v.as_str() {
+                        args.push(s.to_string());
+                    } else if let Some(b) = v.as_bool() {
+                        args.push(b.to_string());
+                    } else if let Some(n) = v.as_i64() {
+                        args.push(n.to_string());
+                    } else if let Some(n) = v.as_u64() {
+                        args.push(n.to_string());
+                    } else if let Some(n) = v.as_f64() {
+                        args.push(n.to_string());
+                    } else {
+                        args.push(v.to_string());
+                    }
+                } else if let Some(def) = p.default_value {
+                    args.push(def);
+                } else {
+                    // Missing required; push empty to preserve arity (tool may validate)
+                    args.push(String::new());
+                }
+            }
+        } else {
+            // Unknown tool; pass entire JSON as single arg for debugging
+            args.push(tc.arguments_json.to_string());
+        }
+        args
+    }
+
+    /// Execute a normalized tool call via ToolRegistry (public for tests)
+    pub async fn execute_normalized_tool_call(&self, tc: &ToolCallNormalized) -> ToolResult {
+        let args = self.map_normalized_tool_to_args(tc);
+        let call = ToolCall {
+            tool: tc.name.clone(),
+            args,
+        };
+        self.tool_registry.execute(&call).await
+    }
+
+    /// Stream via unified provider adapter and collect events, text, and usage
+    async fn stream_with_unified_provider(
+        &self,
+        prompt: &str,
+        max_tokens: Option<usize>,
+        temperature: Option<f32>,
+        print_tokens: bool,
+        include_tools: bool,
+    ) -> Result<(String, Vec<ToolCallNormalized>, Option<Usage>)> {
+        if self.provider_adapter.is_none() {
+            // Fallback: legacy LLM interface (no events)
+            let text = self
+                .llm
+                .generate_streaming(prompt, max_tokens, temperature, print_tokens)
+                .await?;
+            return Ok((text, Vec::new(), None));
+        }
+
+        info!(
+            "Starting unified streaming (include_tools={}, print_tokens={})",
+            include_tools, print_tokens
+        );
+
+        let mut content = String::new();
+        let mut tool_calls: Vec<ToolCallNormalized> = Vec::new();
+        let mut usage: Option<Usage> = None;
+
+        // Prepare request
+        let mut req = UnifiedGenerateRequest {
+            system: Some(
+                "You are an AI assistant that helps with coding in Rust. You provide clear, concise, and correct code."
+                    .to_string(),
+            ),
+            messages: vec![UnifiedMessage {
+                role: UnifiedRole::User,
+                content: vec![UnifiedContentPart::Text {
+                    text: prompt.to_string(),
+                }],
+            }],
+            tools: None,
+            tool_choice: None,
+            temperature,
+            top_p: None,
+            stop: None,
+            seed: None,
+            logit_bias: None,
+            response_format: None,
+            max_output_tokens: max_tokens.or(Some(1024)),
+            metadata: None,
+        };
+
+        if include_tools {
+            let specs = self.build_unified_tool_specs();
+            if !specs.is_empty() {
+                req.tools = Some(specs);
+                req.tool_choice = Some(UnifiedToolChoice::Auto);
+            }
+        }
+
+        let mut stdout = io::stdout();
+        let mut tool_delta_buf = String::new();
+
+        let mut on_event = |ev: StreamEvent| match ev {
+            StreamEvent::TextDelta(d) => {
+                content.push_str(&d);
+                if print_tokens {
+                    print!("{}", d);
+                    let _ = stdout.flush();
+                }
+            }
+            StreamEvent::ToolDelta(s) => {
+                tool_delta_buf.push_str(&s);
+                // Attempt to parse partial buffer
+                if let Ok(v) = serde_json::from_str::<JsonValue>(&tool_delta_buf) {
+                    if v.get("name").is_some() {
+                        let name = v
+                            .get("name")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("tool")
+                            .to_string();
+                        let id = v.get("id").and_then(|x| x.as_str()).map(|s| s.to_string());
+                        let args = v
+                            .get("arguments")
+                            .or_else(|| v.get("input"))
+                            .cloned()
+                            .unwrap_or_else(|| json!({}));
+                        tool_calls.push(ToolCallNormalized {
+                            id,
+                            name,
+                            arguments_json: args,
+                        });
+                        tool_delta_buf.clear();
+                    }
+                }
+            }
+            StreamEvent::ToolCall(tc) => {
+                tool_calls.push(tc);
+            }
+            StreamEvent::Usage(u) => {
+                usage = Some(u);
+            }
+            StreamEvent::Finished => {
+                // no-op
+            }
+            StreamEvent::Error(msg) => {
+                warn!("Streaming error event: {}", msg);
+            }
+        };
+
+        let res = match self
+            .provider_adapter
+            .as_ref()
+            .unwrap()
+            .generate_streaming(req, &mut on_event)
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                match e.clone() {
+                    ProviderError::TimeoutFirstToken { timeout_ms } => {
+                        warn!("Streaming first token timeout after {} ms", timeout_ms);
+                    }
+                    ProviderError::TimeoutStall { timeout_ms } => {
+                        warn!("Streaming stalled for {} ms", timeout_ms);
+                    }
+                    _ => {}
+                }
+                return Err(anyhow::anyhow!(e.to_string()));
+            }
+        };
+
+        if print_tokens {
+            println!();
+        }
+
+        let final_text = if res.text.is_empty() {
+            content
+        } else {
+            res.text
+        };
+
+        info!(
+            "Unified streaming finished (chars={}, tool_calls={})",
+            final_text.len(),
+            tool_calls.len()
+        );
+
+        Ok((final_text, tool_calls, usage))
+    }
+
     /// Extract tool calls from LLM response
+    #[allow(dead_code)]
     fn extract_tool_calls(&self, response: &str) -> Vec<ToolCall> {
         let mut tool_calls = Vec::new();
 
@@ -211,6 +481,7 @@ impl LlmCodeGenerator {
     }
 
     /// Generate with tools in a conversational format
+    #[allow(clippy::cognitive_complexity)]
     async fn generate_with_tools(&self, context: &CodeContext) -> Result<String> {
         // Create initial prompt with tool instructions
         let mut conversation = String::new();
@@ -247,18 +518,18 @@ impl LlmCodeGenerator {
         let system_message = format!(
             "You are a skilled Rust programmer tasked with implementing code improvements. \
             You have access to the following tools to explore and understand the codebase:\n\n{}\n\n\
-            To use a tool, output JSON in the format:\n{{\"tool\": \"tool_name\", \"args\": [\"arg1\", \"arg2\"]}}\n\n\
-            Always provide arguments in the order specified above. Required parameters must always be provided.\n\n\
-            IMPORTANT: You can make multiple tool calls in a single response. Just include multiple tool call objects in your response.\n\
-            For example:\n\
-            {{\"tool\": \"file_contents\", \"args\": [\"src/main.rs\"]}}\n\
-            {{\"tool\": \"code_search\", \"args\": [\"important_function\"]}}\n\n\
-            IMPORTANT: You can decide which files to create or modify using the 'create_file' and 'modify_file' tools.\n\
-            - Use 'create_file' to create new files (will fail if file already exists)\n\
-            - Use 'modify_file' to modify existing files (entire file or specific line ranges)\n\n\
-            After exploring the codebase with tools, make your code changes using these tools.\n\
-            You DON'T need to wait for the human to tell you which files to modify - decide for yourself \
-            based on your understanding of the codebase and the requested changes.",
+            When you need to use a tool, make a tool call using the appropriate function from the tools provided.\n\n\
+            IMPORTANT: Use a variety of tools to thoroughly explore and understand the codebase BEFORE making changes:\n\
+            1. Use 'explore_dir' to understand the project structure and file organization\n\
+            2. Use 'file_contents' to read and analyze specific files\n\
+            3. Use 'code_search' to find specific functions, patterns, or implementations\n\
+            4. Use 'find_tests' to locate and understand existing test coverage\n\
+            5. Use 'git_history' to understand how code has evolved\n\
+            6. Use 'compile_check' to validate code snippets before implementing\n\
+            7. Use 'git_command' for version control operations when needed\n\
+            8. Finally, use 'create_file' or 'modify_file' to implement your improvements\n\n\
+            CRITICAL: Do NOT rely on a single tool. Use multiple different tools to gather comprehensive information before making any changes. \
+            This ensures you understand the full context and can make informed improvements.",
             tool_descriptions
         );
 
@@ -313,16 +584,33 @@ impl LlmCodeGenerator {
                 self.max_tool_iterations
             );
 
-            // Generate a response
-            let response = self
-                .llm
-                .generate(&conversation, Some(2048), Some(0.4))
-                .await?;
+            // Generate a response (prefer unified streaming to collect ToolCall events)
+            let (response, normalized_tool_calls, usage) = if self.provider_adapter.is_some() {
+                self.stream_with_unified_provider(&conversation, Some(2048), Some(0.4), false, true)
+                    .await?
+            } else {
+                let text = self
+                    .llm
+                    .generate_streaming(&conversation, Some(2048), Some(0.4), false)
+                    .await?;
+                (text, Vec::new(), None)
+            };
 
-            // Check if the response contains tool calls
-            let tool_calls = self.extract_tool_calls(&response);
+            if let Some(u) = usage {
+                info!(
+                    "Streaming usage: prompt_tokens={:?} completion_tokens={:?} total_tokens={:?}",
+                    u.prompt_tokens, u.completion_tokens, u.total_tokens
+                );
+            }
 
-            if tool_calls.is_empty() {
+            // Back-compat: also scan response text for legacy inline tool-call JSON when no normalized events present
+            let legacy_tool_calls = if normalized_tool_calls.is_empty() {
+                self.tool_registry.extract_tool_calls(&response)
+            } else {
+                Vec::new()
+            };
+
+            if normalized_tool_calls.is_empty() && legacy_tool_calls.is_empty() {
                 // No tool calls, so this is the final response
                 final_response = response;
                 break;
@@ -331,31 +619,51 @@ impl LlmCodeGenerator {
             // Add the response to the conversation
             conversation.push_str(&format!("\n\nYou: {}\n\n", response));
 
-            // Process each tool call in sequence
-            for tool_call in tool_calls {
-                info!(
-                    "Tool call detected: {} with {} args",
-                    tool_call.tool,
-                    tool_call.args.len()
-                );
-
-                // Execute the tool
-                let tool_result = self.tool_registry.execute(&tool_call).await;
-
-                // Add the result to the conversation
-                if tool_result.success {
-                    conversation.push_str(&format!(
-                        "Tool result for {}:\n{}\n\n",
-                        tool_call.tool, tool_result.result
-                    ));
-                } else {
-                    conversation.push_str(&format!(
-                        "Tool error for {}: {}\n\n",
+            // Prefer normalized tool calls when available
+            if !normalized_tool_calls.is_empty() {
+                for tc in normalized_tool_calls {
+                    info!("Normalized tool call detected: {}", tc.name);
+                    let result = self.execute_normalized_tool_call(&tc).await;
+                    if result.success {
+                        conversation.push_str(&format!(
+                            "Tool result for {}:\n{}\n\n",
+                            tc.name, result.result
+                        ));
+                    } else {
+                        conversation.push_str(&format!(
+                            "Tool error for {}: {}\n\n",
+                            tc.name,
+                            result.error.unwrap_or_else(|| "Unknown error".to_string())
+                        ));
+                    }
+                }
+            } else {
+                // Legacy path
+                for tool_call in legacy_tool_calls {
+                    info!(
+                        "Tool call detected: {} with {} args",
                         tool_call.tool,
-                        tool_result
-                            .error
-                            .unwrap_or_else(|| "Unknown error".to_string())
-                    ));
+                        tool_call.args.len()
+                    );
+
+                    // Execute the tool
+                    let tool_result = self.tool_registry.execute(&tool_call).await;
+
+                    // Add the result to the conversation
+                    if tool_result.success {
+                        conversation.push_str(&format!(
+                            "Tool result for {}:\n{}\n\n",
+                            tool_call.tool, tool_result.result
+                        ));
+                    } else {
+                        conversation.push_str(&format!(
+                            "Tool error for {}: {}\n\n",
+                            tool_call.tool,
+                            tool_result
+                                .error
+                                .unwrap_or_else(|| "Unknown error".to_string())
+                        ));
+                    }
                 }
             }
         }
@@ -453,7 +761,7 @@ impl LlmCodeGenerator {
             // Generate the next message from the LLM
             let llm_response = self
                 .llm
-                .generate(&conversation[0].1, Some(4096), Some(0.5))
+                .generate_streaming(&conversation[0].1, Some(4096), Some(0.5), false)
                 .await?;
 
             // Look for tool calls in the response
@@ -530,7 +838,7 @@ impl LlmCodeGenerator {
         );
         let final_response = self
             .llm
-            .generate(&final_prompt, Some(4096), Some(0.5))
+            .generate_streaming(&final_prompt, Some(4096), Some(0.5), false)
             .await?;
 
         Ok(final_response)
@@ -553,7 +861,7 @@ impl LlmCodeGenerator {
             // Direct LLM call without tools
             let response = self
                 .llm
-                .generate(&full_prompt, Some(4096), Some(0.5))
+                .generate_streaming(&full_prompt, Some(4096), Some(0.5), false)
                 .await?;
             Ok(response)
         }
@@ -599,7 +907,7 @@ impl LlmCodeGenerator {
         // Direct LLM call for commit message
         let response = self
             .llm
-            .generate(&full_prompt, Some(1024), Some(0.4))
+            .generate_streaming(&full_prompt, Some(1024), Some(0.4), false)
             .await?;
 
         // Extract just the commit message (removing any explanations the LLM might add)
@@ -723,7 +1031,9 @@ impl CodeGenerator for LlmCodeGenerator {
                 Some(0.4)
             };
 
-            self.llm.generate(&prompt, max_tokens, temperature).await?
+            self.llm
+                .generate_streaming(&prompt, max_tokens, temperature, false)
+                .await?
         };
 
         // Extract code changes from the response

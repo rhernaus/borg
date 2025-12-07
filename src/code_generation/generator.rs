@@ -65,6 +65,9 @@ pub trait CodeGenerator: Send + Sync {
     ) -> Result<String>;
 }
 
+use crate::code_generation::spec_generator::Specification;
+use crate::code_generation::test_generator::{FailingTest, GeneratedTests};
+
 /// The context for code generation
 #[derive(Debug, Clone)]
 pub struct CodeContext {
@@ -100,6 +103,17 @@ pub struct CodeContext {
 
     /// Current attempt number (1-indexed)
     pub current_attempt: Option<u32>,
+
+    // TDD-specific fields
+
+    /// The specification for this change (generated in TDD flow)
+    pub specification: Option<Specification>,
+
+    /// Tests generated from the specification (TDD flow)
+    pub generated_tests: Option<GeneratedTests>,
+
+    /// Failing tests from the current implementation attempt
+    pub failing_tests: Option<Vec<FailingTest>>,
 }
 
 /// A previous code generation attempt

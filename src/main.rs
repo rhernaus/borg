@@ -149,6 +149,8 @@ fn main() -> Result<()> {
     let config_path = determine_config_path(&cli.config)?;
     info!("Using configuration file: {}", config_path.display());
     let mut config = Config::from_file(config_path)?;
+    // Initialize model-selection runtime snapshot from loaded config
+    borg::core::config::set_runtime_model_selection_from(&config);
 
     // Ensure logs directory exists
     if config.llm_logging.enabled {
@@ -171,8 +173,18 @@ fn main() -> Result<()> {
                 model: "test-model".to_string(),
                 max_tokens: 1024,
                 temperature: 0.7,
+                api_base: None,
+                headers: None,
+                enable_streaming: None,
+                enable_thinking: None,
+                reasoning_effort: None,
+                reasoning_budget_tokens: None,
+                first_token_timeout_ms: None,
+                stall_timeout_ms: None,
             },
         )]);
+        // Update model-selection runtime after mutating config for mock mode
+        borg::core::config::set_runtime_model_selection_from(&config);
     }
 
     // For the git operation command, we don't fully initialize the agent
@@ -189,6 +201,7 @@ fn main() -> Result<()> {
                 .build()?
                 .block_on(async {
                     let agent = Agent::new(config).await?;
+                    agent.initialize().await?;
                     handle_commands(cli.command, agent).await
                 })?;
             return Ok(());
@@ -318,7 +331,7 @@ async fn handle_ask_command(prompt: String, stream: bool, agent: &Agent) -> Resu
     if stream {
         info!("Using streaming mode for response");
         let response = llm_provider
-            .generate_streaming(&prompt, None, Some(0.7))
+            .generate_streaming(&prompt, None, Some(0.7), true)
             .await?;
 
         // The streaming implementation already prints to stdout as it receives tokens,
@@ -350,10 +363,11 @@ async fn handle_commands(command: Option<Commands>, mut agent: Agent) -> Result<
         }
         Some(Commands::Info) => {
             print_banner();
+            println!("Agent Information:");
             let version = env!("CARGO_PKG_VERSION");
             println!("Version: {}", version);
             println!(
-                "Working directory: {}",
+                "Working Directory: {}",
                 agent.get_config().agent.working_dir
             );
 
@@ -418,6 +432,18 @@ async fn handle_commands(command: Option<Commands>, mut agent: Agent) -> Result<
                     println!("  Timeframe: {} months", objective.timeframe);
                     println!("  Created by: {}", objective.created_by);
                     println!("  Progress: {}%", objective.progress);
+                    if !objective.key_results.is_empty() {
+                        println!("  Key Results:");
+                        for kr in &objective.key_results {
+                            println!("    - {}", kr);
+                        }
+                    }
+                    if !objective.constraints.is_empty() {
+                        println!("  Constraints:");
+                        for c in &objective.constraints {
+                            println!("    - {}", c);
+                        }
+                    }
                     println!();
                 }
             }
@@ -427,7 +453,7 @@ async fn handle_commands(command: Option<Commands>, mut agent: Agent) -> Result<
         Some(Commands::Plan(PlanCommands::Generate)) => {
             println!("Generating strategic plan...");
             agent.generate_strategic_plan().await?;
-            println!("Strategic plan generated successfully");
+            println!("Planning cycle completed successfully");
 
             Ok(())
         }
@@ -487,6 +513,7 @@ async fn handle_commands(command: Option<Commands>, mut agent: Agent) -> Result<
 
             for obj in config.objectives {
                 // Add each strategic objective with individual parameters
+                println!("Adding objective: {}", obj.title);
                 agent
                     .add_strategic_objective(
                         &obj.id,

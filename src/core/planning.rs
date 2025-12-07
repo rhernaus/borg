@@ -6,9 +6,7 @@ use std::fmt;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::Mutex;
-use tokio::time;
 
 use crate::code_generation::llm::{LlmFactory, LlmProvider};
 use crate::core::config::{LlmConfig, LlmLoggingConfig};
@@ -360,6 +358,10 @@ pub struct StrategicPlanningManager {
 
     /// LLM logging configuration
     llm_logging_config: LlmLoggingConfig,
+
+    /// LLM timeouts (seconds)
+    plan_llm_timeout_secs: u64,
+    milestone_llm_timeout_secs: u64,
 }
 
 impl StrategicPlanningManager {
@@ -387,17 +389,41 @@ impl StrategicPlanningManager {
             data_dir: data_dir.to_string(),
             llm_config: None,
             llm_logging_config,
+            plan_llm_timeout_secs: 5,
+            milestone_llm_timeout_secs: 5,
         }
     }
 
     /// Set the LLM configuration
     pub fn set_llm_config(&mut self, config: LlmConfig) {
+        info!(
+            "Planning LLM configured: provider={} model={}",
+            config.provider, config.model
+        );
         self.llm_config = Some(config);
     }
 
     /// Set the LLM logging configuration
     pub fn set_llm_logging_config(&mut self, config: LlmLoggingConfig) {
         self.llm_logging_config = config;
+    }
+
+    /// Set timeouts for LLM operations
+    pub fn set_timeouts(&mut self, plan_timeout_secs: u64, milestone_timeout_secs: u64) {
+        self.plan_llm_timeout_secs = if plan_timeout_secs == 0 {
+            5
+        } else {
+            plan_timeout_secs
+        };
+        self.milestone_llm_timeout_secs = if milestone_timeout_secs == 0 {
+            5
+        } else {
+            milestone_timeout_secs
+        };
+        info!(
+            "Planning timeouts configured: plan={}s milestone={}s",
+            self.plan_llm_timeout_secs, self.milestone_llm_timeout_secs
+        );
     }
 
     /// Load the strategic plan from disk
@@ -535,6 +561,14 @@ impl StrategicPlanningManager {
                     model: "gpt-4".to_string(),
                     max_tokens: 4096,
                     temperature: 0.7,
+                    api_base: None,
+                    headers: None,
+                    enable_streaming: None,
+                    enable_thinking: None,
+                    reasoning_effort: None,
+                    reasoning_budget_tokens: None,
+                    first_token_timeout_ms: None,
+                    stall_timeout_ms: None,
                 }
             }
         };
@@ -566,16 +600,14 @@ impl StrategicPlanningManager {
         // Create a prompt for the LLM
         let prompt = self.create_strategic_planning_prompt();
 
-        // Call the LLM with the prompt but with a timeout to prevent hanging
-        let llm_response = time::timeout(
-            Duration::from_secs(5), // 5 second timeout
-            llm.generate(&prompt, Some(4096), Some(0.7)),
-        )
-        .await;
+        // Call the LLM with provider-level idle-timeout semantics (streaming, buffered)
+        let response_res = llm
+            .generate_streaming(&prompt, Some(4096), Some(0.7), false)
+            .await;
 
-        match llm_response {
-            Ok(Ok(response)) => {
-                // Successfully got a response within the timeout
+        match response_res {
+            Ok(response) => {
+                // Successfully got a response
                 info!("Received LLM response for strategic plan generation");
                 info!("LLM response length: {} characters", response.len());
                 debug!(
@@ -590,16 +622,12 @@ impl StrategicPlanningManager {
                 // In a real implementation, we would parse the response and update the plan
                 // For now, we'll just log that we received a response and use the existing plan
             }
-            Ok(Err(e)) => {
-                // LLM call returned an error within the timeout
+            Err(e) => {
+                // LLM call returned an error
                 warn!(
                     "Error generating strategic plan with LLM: {} - using fallback strategy",
                     e
                 );
-            }
-            Err(_) => {
-                // LLM call timed out
-                warn!("LLM call timed out after 5 seconds - using fallback strategy");
             }
         }
 
@@ -757,16 +785,14 @@ impl StrategicPlanningManager {
             // Create a prompt for milestone generation
             let prompt = self.create_milestone_generation_prompt(objective);
 
-            // Call the LLM with the prompt but with a timeout to prevent hanging
-            let llm_response = time::timeout(
-                Duration::from_secs(5), // 5 second timeout
-                llm.generate(&prompt, Some(2048), Some(0.7)),
-            )
-            .await;
+            // Call the LLM with provider-level idle-timeout semantics (streaming, buffered)
+            let response_res = llm
+                .generate_streaming(&prompt, Some(2048), Some(0.7), false)
+                .await;
 
-            match llm_response {
-                Ok(Ok(response)) => {
-                    // Successfully got a response within the timeout
+            match response_res {
+                Ok(response) => {
+                    // Successfully got a response
                     info!("Received LLM response for milestone generation");
                     info!("LLM response length: {} characters", response.len());
                     debug!(
@@ -782,17 +808,12 @@ impl StrategicPlanningManager {
                     warn!("LLM milestone parsing not yet implemented - using fallback strategy");
                     self.generate_fallback_milestones(objective)
                 }
-                Ok(Err(e)) => {
-                    // LLM call returned an error within the timeout
+                Err(e) => {
+                    // LLM call returned an error
                     warn!(
                         "Error generating milestones with LLM: {} - using fallback strategy",
                         e
                     );
-                    self.generate_fallback_milestones(objective)
-                }
-                Err(_) => {
-                    // LLM call timed out
-                    warn!("LLM call timed out after 5 seconds - using fallback strategy");
                     self.generate_fallback_milestones(objective)
                 }
             }

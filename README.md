@@ -296,6 +296,128 @@ database = "borg"                             # Database name to use
 
 Using MongoDB allows multiple instances of Borg to share the same database, making it ideal for distributed deployments or team environments.
 
+## New Provider and LLM Configuration Options
+
+### OpenRouter provider
+
+You can use OpenRouter as an LLM provider by setting `provider = "openrouter"` in your LLM config entry.
+
+- Provider name: `openrouter`
+- Required environment variable: `OPENROUTER_API_KEY` (provider code will use this; you may also hardcode `api_key` in config for local testing)
+- Default API base (when not set in config): `https://openrouter.ai/api/v1`
+- Optional headers (recommended by OpenRouter policy) can be configured under `[llm.&lt;name&gt;.headers]`:
+  - `HTTP-Referer`: Your site origin, for example `"https://your.app"`
+  - `X-Title`: A short name for your app, for example `"Your App Name"`
+
+Example (TOML) with headers:
+```toml
+[llm.default]
+provider = "openrouter"
+api_key = "your-openrouter-api-key-here"  # or set the OPENROUTER_API_KEY env var
+model = "openrouter/auto"                 # or a specific upstream model id
+api_base = "https://openrouter.ai/api/v1"
+enable_streaming = true
+enable_thinking = true
+reasoning_effort = "high"                 # one of: "low" | "medium" | "high"
+reasoning_budget_tokens = 4096
+first_token_timeout_ms = 20000
+stall_timeout_ms = 8000
+
+[llm.default.headers]
+HTTP-Referer = "https://your.app"
+X-Title = "Your App Name"
+```
+
+### New LLM config fields
+
+The following optional fields are now available on each LLM entry. If a provider or model does not support a feature, it is safely ignored.
+
+- `api_base: string?`
+  - Optional base URL override for the provider.
+  - For OpenRouter the default is `https://openrouter.ai/api/v1` when `provider = "openrouter"` unless explicitly set in config.
+
+- `headers: { string: string }?`
+  - Optional static HTTP headers to send on every request (e.g., `HTTP-Referer`, `X-Title` for OpenRouter).
+
+- `enable_streaming: bool?`
+  - Enable streaming responses when supported.
+  - Default semantics:
+    - Ask CLI flow will treat `None` as enabled by default.
+    - Other flows remain non-streaming unless explicitly set.
+
+- `enable_thinking: bool?`
+  - Enable provider/model-specific “thinking/reasoning” traces where supported.
+  - Ignored for unsupported providers/models.
+
+- `reasoning_effort: "low" | "medium" | "high"?`
+  - Hint for provider-specific reasoning effort levels.
+  - Safe to ignore if unsupported.
+
+- `reasoning_budget_tokens: number?`
+  - Provider-specific budget for thinking/reasoning tokens where supported.
+  - Ignored if unsupported.
+
+- `first_token_timeout_ms: number?`
+  - Max wait time for the first streaming token before timing out (idle-timeout).
+  - RFC default effective value: `30000` ms when not set and when streaming is used (implementation comes in streaming subtask).
+
+- `stall_timeout_ms: number?`
+  - Max idle gap between streaming tokens before timing out (idle-timeout).
+  - RFC default effective value: `10000` ms when not set and when streaming is used (implementation comes in streaming subtask).
+
+### Examples (TOML)
+
+- Default LLM (Ask)
+```toml
+[llm.default]
+provider = "openai"
+model = "gpt-4o-mini"
+enable_streaming = true
+# enable_thinking = false
+# reasoning_effort = "medium"
+# reasoning_budget_tokens = 2048
+# first_token_timeout_ms = 30000
+# stall_timeout_ms = 10000
+```
+
+- Code generation LLM
+```toml
+[llm.code_generation]
+provider = "openai"
+model = "gpt-4o"
+enable_streaming = false
+```
+
+- Planning LLM
+```toml
+[llm.planning]
+provider = "anthropic"
+model = "claude-3-5-sonnet"
+# enable_streaming = false
+```
+
+- OpenRouter example with headers
+```toml
+[llm.default]
+provider = "openrouter"
+model = "openrouter/auto"  # or a specific upstream model id
+api_base = "https://openrouter.ai/api/v1"
+enable_streaming = true
+enable_thinking = true
+reasoning_effort = "high"
+reasoning_budget_tokens = 4096
+first_token_timeout_ms = 20000
+stall_timeout_ms = 8000
+
+[llm.default.headers]
+HTTP-Referer = "https://your.app"
+X-Title = "Your App Name"
+```
+
+Notes:
+- When `enable_streaming` is not set, Ask CLI will treat it as enabled by default; other flows remain non-streaming unless configured.
+- Idle-timeout defaults are applied by streaming logic when it is enabled: `first_token_timeout_ms = 30000`, `stall_timeout_ms = 10000`, unless overridden.
+- Unsupported fields degrade safely and are ignored when not applicable to the provider/model.
 ## Roadmap
 
 Please see the [PROGRESS.md](PROGRESS.md) file for detailed information on the project's current status and roadmap.

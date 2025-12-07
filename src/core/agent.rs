@@ -18,8 +18,7 @@ use crate::core::planning::{StrategicObjective, StrategicPlan, StrategicPlanning
 use crate::core::strategies::CodeImprovementStrategy;
 use crate::core::strategy::{ActionType, Plan, StrategyManager};
 use crate::database::DatabaseManager;
-use crate::resource_monitor::monitor::ResourceMonitor;
-use crate::resource_monitor::monitor::SystemResourceMonitor;
+use crate::resource_monitor::monitor::{ResourceLimits, ResourceMonitor, SystemResourceMonitor};
 use crate::testing::simple::SimpleTestRunner;
 use crate::testing::test_runner::TestRunner;
 use crate::version_control::git::GitManager;
@@ -120,8 +119,15 @@ impl Agent {
 
         let test_runner: Arc<dyn TestRunner> = Arc::new(SimpleTestRunner::new(&working_dir)?);
 
-        let resource_monitor: Arc<Mutex<dyn ResourceMonitor>> =
-            Arc::new(Mutex::new(SystemResourceMonitor::new()));
+        let resource_limits = ResourceLimits {
+            max_memory_mb: config.agent.max_memory_usage_mb as f64,
+            max_cpu_percent: config.agent.max_cpu_usage_percent as f64,
+            max_disk_mb: Some(1000.0),
+        };
+
+        let resource_monitor: Arc<Mutex<dyn ResourceMonitor>> = Arc::new(Mutex::new(
+            SystemResourceMonitor::with_limits(resource_limits),
+        ));
 
         let ethics_manager = Arc::new(Mutex::new(EthicsManager::new()));
 
@@ -751,22 +757,29 @@ impl Agent {
 
     /// List all strategic objectives
     pub async fn list_strategic_objectives(&self) -> Vec<StrategicObjective> {
-        if let Some(db_manager) = &self.database_manager {
-            match futures::executor::block_on(db_manager.objectives().get_all()) {
-                Ok(records) => records
-                    .into_iter()
-                    .map(|record| record.entity().clone())
-                    .collect(),
-                Err(e) => {
-                    error!("Error retrieving strategic objectives from database: {}", e);
-                    Vec::new()
+        // Prefer the in-memory plan, which contains the most up-to-date objective state
+        let planning_manager = self.strategic_planning_manager.lock().await;
+        let mut objectives = planning_manager.get_plan().objectives.clone();
+        drop(planning_manager);
+
+        // If no objectives are present in-memory (e.g., fresh start), fall back to database
+        if objectives.is_empty() {
+            if let Some(db_manager) = &self.database_manager {
+                match futures::executor::block_on(db_manager.objectives().get_all()) {
+                    Ok(records) => {
+                        objectives = records
+                            .into_iter()
+                            .map(|record| record.entity().clone())
+                            .collect();
+                    }
+                    Err(e) => {
+                        error!("Error retrieving strategic objectives from database: {}", e);
+                    }
                 }
             }
-        } else {
-            // Fall back to the in-memory objectives from the strategic planning manager
-            let planning_manager = self.strategic_planning_manager.lock().await;
-            planning_manager.get_plan().objectives.clone()
         }
+
+        objectives
     }
 
     /// Generate a strategic plan
@@ -938,6 +951,12 @@ impl Agent {
         // Set the LLM logging config
         planning_manager.set_llm_logging_config(self.config.llm_logging.clone());
 
+        // Set planning LLM timeouts from config (fallback to defaults if zero)
+        planning_manager.set_timeouts(
+            self.config.planning.llm_timeout_seconds,
+            self.config.planning.milestone_llm_timeout_seconds,
+        );
+
         // Release the lock before potentially long operations
         drop(planning_manager);
 
@@ -1043,6 +1062,32 @@ impl Agent {
             .with_constraints(constraints);
 
         planning_manager.add_objective(objective.clone());
+
+        // Attempt to persist to database if available (file-based or MongoDB) before releasing the lock
+        if let Some(db_manager) = &self.database_manager {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                db_manager.objectives().insert(objective.clone()),
+            )
+            .await
+            {
+                Ok(Ok(_)) => {
+                    info!("Inserted strategic objective {} into database", id);
+                }
+                Ok(Err(e)) => {
+                    warn!(
+                        "Failed to insert strategic objective {} into database: {} - continuing",
+                        id, e
+                    );
+                }
+                Err(_) => {
+                    warn!(
+                        "Timed out inserting strategic objective {} into database - continuing",
+                        id
+                    );
+                }
+            }
+        }
 
         // Clone the objective to avoid borrowing issues
         drop(planning_manager);
@@ -1150,3 +1195,12 @@ impl Agent {
 }
 
 // Helper functions for metric evaluation
+
+/// Optional accessor for Modes v2 dispatcher (feature-gated via config).
+/// NOTE: Modes v2 has been removed for MVP. This always returns None.
+impl Agent {
+    pub fn maybe_mode_dispatcher(&self) -> Option<()> {
+        // Modes v2 removed - always return None
+        None
+    }
+}

@@ -1301,6 +1301,112 @@ impl LlmTool for GitCommandTool {
     }
 }
 
+/// A tool that runs tests and returns structured feedback
+pub struct TestRunnerTool {
+    workspace: PathBuf,
+}
+
+impl TestRunnerTool {
+    /// Create a new test runner tool
+    pub fn new(workspace: PathBuf) -> Self {
+        Self { workspace }
+    }
+}
+
+#[async_trait]
+impl LlmTool for TestRunnerTool {
+    fn name(&self) -> &str {
+        "run_tests"
+    }
+
+    fn description(&self) -> &str {
+        "Run the project's test suite and return results. Use this to verify code changes work correctly."
+    }
+
+    fn parameters(&self) -> Vec<ToolParameter> {
+        vec![ToolParameter {
+            name: "test_filter".to_string(),
+            description: "Optional filter to run specific tests (e.g., 'test_name' or 'module::')"
+                .to_string(),
+            required: false,
+            default_value: None,
+            param_type: Some(ToolParameterType::String),
+        }]
+    }
+
+    async fn execute(&self, args: &[&str]) -> Result<String> {
+        let test_filter = if !args.is_empty() && !args[0].is_empty() {
+            Some(args[0])
+        } else {
+            None
+        };
+
+        info!("Running tests in workspace: {:?}", self.workspace);
+
+        // Build the cargo test command
+        let mut cmd = Command::new("cargo");
+        cmd.current_dir(&self.workspace)
+            .arg("test")
+            .arg("--")
+            .arg("--color=never"); // Disable color for easier parsing
+
+        if let Some(filter) = test_filter {
+            cmd.arg(filter);
+        }
+
+        match cmd.output() {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let success = output.status.success();
+
+                // Parse test results
+                let mut result = String::new();
+
+                if success {
+                    result.push_str("✅ All tests passed!\n\n");
+                } else {
+                    result.push_str("❌ Some tests failed!\n\n");
+                }
+
+                // Extract test summary line
+                if let Some(summary_line) = stdout.lines().find(|l| l.contains("test result:")) {
+                    result.push_str(&format!("Summary: {}\n\n", summary_line));
+                }
+
+                // Extract failed test names
+                let failed_tests: Vec<&str> =
+                    stdout.lines().filter(|l| l.contains("FAILED")).collect();
+
+                if !failed_tests.is_empty() {
+                    result.push_str("Failed tests:\n");
+                    for test in failed_tests {
+                        result.push_str(&format!("  - {}\n", test));
+                    }
+                    result.push('\n');
+                }
+
+                // Include compilation errors if any
+                if !stderr.is_empty() && stderr.contains("error") {
+                    result.push_str("Compilation/Runtime Errors:\n");
+                    // Limit error output to avoid overwhelming the context
+                    let error_lines: Vec<&str> = stderr
+                        .lines()
+                        .filter(|l| l.contains("error") || l.contains("-->"))
+                        .take(20)
+                        .collect();
+                    for line in error_lines {
+                        result.push_str(&format!("{}\n", line));
+                    }
+                }
+
+                Ok(result)
+            }
+            Err(e) => Err(anyhow::anyhow!("Failed to run tests: {}", e)),
+        }
+    }
+}
+
 /// Tool registry for managing available tools
 pub struct ToolRegistry {
     tools: HashMap<String, Box<dyn LlmTool>>,

@@ -1,0 +1,17 @@
+# Cargo Audit configuration
+# Justification:
+# - RUSTSEC-2025-0052 (async-std discontinued) is introduced via the httpmock dev-dependency.
+# - httpmock is used only in test targets to avoid real network calls, never in production binaries or libraries.
+# - We will replace httpmock or update once an alternative is available; tracked by tooling.
+# - This advisory is ignored to allow CI quality gates to pass while keeping tests hermetic and offline.
+
+[advisories]
+ignore = [
+  "RUSTSEC-2025-0052", # async-std unmaintained (transitive via httpmock, tests-only)
+]
+
+# Show full output to ensure any future advisories are visible in logs
+[output]
+format = "terminal"
+quiet = false
+show_tree = true

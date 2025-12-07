@@ -197,10 +197,19 @@ impl LlmLogger {
                 .iter()
                 .skip(self.config.log_files_to_keep as usize)
             {
-                fs::remove_file(path)
-                    .with_context(|| format!("Failed to delete old log file: {:?}", path))?;
-
-                info!("Deleted old log file: {:?}", path);
+                match fs::remove_file(path) {
+                    Ok(_) => {
+                        info!("Deleted old log file: {:?}", path);
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        // Non-fatal: file already gone (race or prior cleanup)
+                        log::debug!("Old log file already missing: {:?}", path);
+                    }
+                    Err(e) => {
+                        // Non-fatal: warn and continue cleanup without failing initialization
+                        log::warn!("Failed to delete old log file {:?}: {}", path, e);
+                    }
+                }
             }
         }
 
