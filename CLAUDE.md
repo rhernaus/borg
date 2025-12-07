@@ -53,9 +53,9 @@ Borg is an autonomous self-improving AI agent. The codebase is organized into th
 
 ## Configuration
 
-- Primary config: `config.production.toml` (not committed, contains API keys)
-- Template: `config.toml` (committed, placeholder values)
-- The CLI falls back to `config.toml` only when `config.production.toml` is missing
+- Template: `config.sample.toml` (committed, placeholder values)
+- User config: `config.toml` (gitignored, contains your API keys)
+- Copy the sample to get started: `cp config.sample.toml config.toml`
 
 LLM configuration supports multiple providers with these optional fields:
 - `api_base`, `headers`, `enable_streaming`, `enable_thinking`

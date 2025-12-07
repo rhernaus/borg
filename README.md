@@ -260,14 +260,14 @@ The application uses configuration files to manage its settings. For security re
 
 ### Setting Up Configuration
 
-1. The repository includes `config.toml`, which is a template file with placeholder values.
+1. The repository includes `config.sample.toml`, which is a template file with placeholder values.
 
-2. For local development, copy this template to a production configuration file:
+2. Copy the sample config to create your local configuration:
    ```
-   cp config.toml config.production.toml
+   cp config.sample.toml config.toml
    ```
 
-3. Edit the `config.production.toml` file and add your API keys:
+3. Edit `config.toml` and add your API keys:
    ```toml
    # Default LLM configuration
    [llm.default]

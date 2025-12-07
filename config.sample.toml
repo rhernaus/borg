@@ -1,7 +1,7 @@
 # Borg Agent Configuration Template
-# This is an example configuration file.
-# For local development, copy this file to config.production.toml and add your API keys.
-# The config.production.toml file is ignored by Git to prevent accidentally committing your API keys.
+# Copy this file to config.toml and add your API keys:
+#   cp config.sample.toml config.toml
+# The config.toml file is ignored by Git to prevent accidentally committing your API keys.
 
 # Default LLM configuration (used as fallback)
 [llm.default]
