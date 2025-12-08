@@ -72,6 +72,11 @@ pub struct PhaseConfig {
     /// References to ModelConfig.name (models to use for this phase)
     pub models: Vec<String>,
 
+    /// Tools available to agents in this phase (e.g., ["Read", "Grep"])
+    /// Empty list means no tools (pure LLM reasoning)
+    #[serde(default)]
+    pub tools: Vec<String>,
+
     /// Prompt to use for this phase
     pub prompt: String,
 }
@@ -300,6 +305,11 @@ impl Config {
         )?;
         self.validate_phase_models("tdd", &self.phases.tdd.models, &model_names)?;
 
+        // Validate phase tool references
+        self.validate_phase_tools("research", &self.phases.research.tools)?;
+        self.validate_phase_tools("deliberation", &self.phases.deliberation.tools)?;
+        self.validate_phase_tools("tdd", &self.phases.tdd.tools)?;
+
         // Validate that model names are unique
         let mut seen_names = HashSet::new();
         for model in &self.models {
@@ -359,6 +369,41 @@ impl Config {
         Ok(())
     }
 
+    /// Valid tool names that can be used in phase configurations
+    pub const VALID_TOOLS: &'static [&'static str] = &[
+        // File operations
+        "Read",
+        "Write",
+        "Edit",
+        // Execution
+        "Bash",
+        // Search
+        "Grep",
+        "Glob",
+        // Web
+        "WebSearch",
+        "WebFetch",
+        // Agent (main agent only)
+        "Task",
+        // Task management
+        "TodoWrite",
+    ];
+
+    /// Validate that all phase tool references are valid
+    fn validate_phase_tools(&self, phase_name: &str, tools: &[String]) -> Result<()> {
+        for tool_name in tools {
+            if !Self::VALID_TOOLS.contains(&tool_name.as_str()) {
+                bail!(
+                    "Phase '{}' references unknown tool '{}'. Available tools: {}",
+                    phase_name,
+                    tool_name,
+                    Self::VALID_TOOLS.join(", ")
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Get a model configuration by name
     pub fn get_model(&self, name: &str) -> Option<&ModelConfig> {
         self.models.iter().find(|m| m.name == name)
@@ -383,14 +428,17 @@ impl Config {
             phases: PhasesConfig {
                 research: PhaseConfig {
                     models: vec!["test-model".to_string()],
+                    tools: vec!["Read".to_string(), "Grep".to_string()],
                     prompt: "Research phase prompt".to_string(),
                 },
                 deliberation: PhaseConfig {
                     models: vec!["test-model".to_string()],
+                    tools: vec![], // Pure reasoning
                     prompt: "Deliberation phase prompt".to_string(),
                 },
                 tdd: PhaseConfig {
                     models: vec!["test-model".to_string()],
+                    tools: vec!["Read".to_string(), "Write".to_string(), "Edit".to_string()],
                     prompt: "TDD phase prompt".to_string(),
                 },
             },
@@ -491,14 +539,17 @@ mod tests {
             phases: PhasesConfig {
                 research: PhaseConfig {
                     models: vec![],
+                    tools: vec![],
                     prompt: "test".to_string(),
                 },
                 deliberation: PhaseConfig {
                     models: vec![],
+                    tools: vec![],
                     prompt: "test".to_string(),
                 },
                 tdd: PhaseConfig {
                     models: vec![],
+                    tools: vec![],
                     prompt: "test".to_string(),
                 },
             },
@@ -541,14 +592,17 @@ mod tests {
             phases: PhasesConfig {
                 research: PhaseConfig {
                     models: vec!["nonexistent".to_string()],
+                    tools: vec![],
                     prompt: "test".to_string(),
                 },
                 deliberation: PhaseConfig {
                     models: vec!["model1".to_string()],
+                    tools: vec![],
                     prompt: "test".to_string(),
                 },
                 tdd: PhaseConfig {
                     models: vec!["model1".to_string()],
+                    tools: vec![],
                     prompt: "test".to_string(),
                 },
             },

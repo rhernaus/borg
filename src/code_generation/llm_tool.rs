@@ -82,15 +82,15 @@ pub struct ToolResult {
     pub error: Option<String>,
 }
 
-/// A tool that searches code
-pub struct CodeSearchTool {
+/// A tool that searches code using ripgrep
+pub struct GrepTool {
     workspace: PathBuf,
     #[allow(dead_code)]
     git_manager: Arc<Mutex<dyn GitManager>>,
 }
 
-impl CodeSearchTool {
-    /// Create a new code search tool
+impl GrepTool {
+    /// Create a new grep tool
     pub fn new(workspace: PathBuf, git_manager: Arc<Mutex<dyn GitManager>>) -> Self {
         Self {
             workspace,
@@ -100,13 +100,13 @@ impl CodeSearchTool {
 }
 
 #[async_trait]
-impl LlmTool for CodeSearchTool {
+impl LlmTool for GrepTool {
     fn name(&self) -> &str {
-        "code_search"
+        "Grep"
     }
 
     fn description(&self) -> &str {
-        "Search for code patterns or symbols in the codebase."
+        "Search for code patterns or symbols in the codebase using ripgrep."
     }
 
     fn parameters(&self) -> Vec<ToolParameter> {
@@ -204,11 +204,11 @@ impl LlmTool for CodeSearchTool {
 }
 
 /// A tool that reads file contents
-pub struct FileContentsTool {
+pub struct ReadTool {
     workspace: PathBuf,
 }
 
-impl FileContentsTool {
+impl ReadTool {
     /// Create a new file contents tool
     pub fn new(workspace: PathBuf) -> Self {
         Self { workspace }
@@ -216,9 +216,9 @@ impl FileContentsTool {
 }
 
 #[async_trait]
-impl LlmTool for FileContentsTool {
+impl LlmTool for ReadTool {
     fn name(&self) -> &str {
-        "file_contents"
+        "Read"
     }
 
     fn description(&self) -> &str {
@@ -440,185 +440,281 @@ impl LlmTool for FindTestsTool {
         }
     }
 }
-
-/// A tool that explores directory contents
-pub struct DirectoryExplorationTool {
+/// A tool that finds files matching glob patterns
+pub struct GlobTool {
     workspace: PathBuf,
 }
 
-impl DirectoryExplorationTool {
-    /// Create a new directory exploration tool
+impl GlobTool {
+    /// Create a new glob tool
     pub fn new(workspace: PathBuf) -> Self {
         Self { workspace }
     }
 }
 
 #[async_trait]
-impl LlmTool for DirectoryExplorationTool {
+impl LlmTool for GlobTool {
     fn name(&self) -> &str {
-        "explore_dir"
+        "Glob"
     }
 
     fn description(&self) -> &str {
-        "List the contents of a directory. Usage: explore_dir <directory_path> [show_hidden=false] [max_depth=1]"
+        "Find files matching glob patterns (e.g., '**/*.rs', 'src/**/*.toml')"
     }
 
     fn parameters(&self) -> Vec<ToolParameter> {
         vec![
             ToolParameter {
-                name: "directory_path".to_string(),
-                description: "Path to the directory to explore".to_string(),
+                name: "pattern".to_string(),
+                description: "Glob pattern to match files (e.g., '**/*.rs')".to_string(),
                 required: true,
                 default_value: None,
                 param_type: Some(ToolParameterType::String),
             },
             ToolParameter {
-                name: "show_hidden".to_string(),
-                description: "Whether to show hidden files and directories".to_string(),
-                required: false,
-                default_value: Some("false".to_string()),
-                param_type: Some(ToolParameterType::Boolean),
-            },
-            ToolParameter {
-                name: "max_depth".to_string(),
-                description: "Maximum depth to explore (1 means just the specified directory)"
+                name: "path".to_string(),
+                description: "Optional directory to search in (defaults to workspace root)"
                     .to_string(),
                 required: false,
-                default_value: Some("1".to_string()),
-                param_type: Some(ToolParameterType::Integer),
+                default_value: None,
+                param_type: Some(ToolParameterType::String),
             },
         ]
     }
 
     async fn execute(&self, args: &[&str]) -> Result<String> {
         if args.is_empty() {
-            return Err(anyhow::anyhow!("No directory path provided"));
+            return Err(anyhow::anyhow!("No glob pattern provided"));
         }
 
-        let dir_path = Path::new(args[0]);
-        let full_path = self.workspace.join(dir_path);
+        let pattern = args[0];
 
-        if !full_path.exists() {
+        // Determine the search base directory
+        let search_dir = if args.len() > 1 && !args[1].is_empty() {
+            self.workspace.join(args[1])
+        } else {
+            self.workspace.clone()
+        };
+
+        if !search_dir.exists() {
             return Err(anyhow::anyhow!(
-                "Directory not found: {}",
-                dir_path.display()
+                "Search directory not found: {}",
+                search_dir.display()
             ));
         }
 
-        if !full_path.is_dir() {
-            return Err(anyhow::anyhow!("Not a directory: {}", dir_path.display()));
+        // Build the full glob pattern including the base directory
+        let glob_pattern = search_dir.join(pattern);
+        let pattern_str = glob_pattern.to_string_lossy();
+
+        // Use glob crate to find matching files
+        let mut matches = Vec::new();
+        match glob::glob(&pattern_str) {
+            Ok(paths) => {
+                for entry in paths {
+                    match entry {
+                        Ok(path) => {
+                            // Get path relative to workspace
+                            if let Ok(rel_path) = path.strip_prefix(&self.workspace) {
+                                matches.push(rel_path.to_string_lossy().to_string());
+                            } else {
+                                matches.push(path.to_string_lossy().to_string());
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Error reading glob entry: {}", e);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!("Invalid glob pattern '{}': {}", pattern, e));
+            }
         }
 
-        // Parse optional arguments
-        let show_hidden = if args.len() > 1 {
-            args[1].parse::<bool>().unwrap_or(false)
+        if matches.is_empty() {
+            Ok(format!("No files found matching pattern: {}", pattern))
+        } else {
+            // Sort matches for consistent output
+            matches.sort();
+            Ok(format!(
+                "Files matching '{}' ({} files):
+{}",
+                pattern,
+                matches.len(),
+                matches.join(
+                    "
+"
+                )
+            ))
+        }
+    }
+}
+
+/// A tool that executes shell commands
+pub struct BashTool {
+    workspace: PathBuf,
+}
+
+impl BashTool {
+    /// Create a new bash tool
+    pub fn new(workspace: PathBuf) -> Self {
+        Self { workspace }
+    }
+
+    /// Safety blocklist for dangerous commands
+    fn is_safe_command(&self, command: &str) -> Result<()> {
+        let dangerous_patterns = [
+            "rm -rf /",
+            "rm -rf /*",
+            "rm -rf ~",
+            "rm -rf $HOME",
+            "mkfs",
+            "dd if=",
+            "> /dev/sda",
+            "> /dev/sd",
+            "wipefs",
+            "shred",
+            ":(){:|:&};:", // Fork bomb
+            "chmod -R 777 /",
+            "chown -R",
+        ];
+
+        let cmd_lower = command.to_lowercase();
+        for pattern in &dangerous_patterns {
+            if cmd_lower.contains(&pattern.to_lowercase()) {
+                return Err(anyhow::anyhow!(
+                    "Dangerous command blocked: contains pattern '{}'",
+                    pattern
+                ));
+            }
+        }
+
+        // Block commands trying to escape workspace
+        if command.contains("../") || command.contains("/..") {
+            return Err(anyhow::anyhow!(
+                "Command blocked: attempting to access parent directories"
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl LlmTool for BashTool {
+    fn name(&self) -> &str {
+        "Bash"
+    }
+
+    fn description(&self) -> &str {
+        "Execute shell commands in the workspace. Has safety blocklist for dangerous commands."
+    }
+
+    fn parameters(&self) -> Vec<ToolParameter> {
+        vec![
+            ToolParameter {
+                name: "command".to_string(),
+                description: "Shell command to execute".to_string(),
+                required: true,
+                default_value: None,
+                param_type: Some(ToolParameterType::String),
+            },
+            ToolParameter {
+                name: "description".to_string(),
+                description: "Optional description of what this command does".to_string(),
+                required: false,
+                default_value: None,
+                param_type: Some(ToolParameterType::String),
+            },
+            ToolParameter {
+                name: "timeout".to_string(),
+                description: "Optional timeout in milliseconds (max 600000ms / 10 minutes)"
+                    .to_string(),
+                required: false,
+                default_value: Some("120000".to_string()),
+                param_type: Some(ToolParameterType::Integer),
+            },
+            ToolParameter {
+                name: "run_in_background".to_string(),
+                description: "Set to true to run command in background".to_string(),
+                required: false,
+                default_value: Some("false".to_string()),
+                param_type: Some(ToolParameterType::Boolean),
+            },
+        ]
+    }
+
+    async fn execute(&self, args: &[&str]) -> Result<String> {
+        if args.is_empty() {
+            return Err(anyhow::anyhow!("No command provided"));
+        }
+
+        let command = args[0];
+        let _description = if args.len() > 1 && !args[1].is_empty() {
+            Some(args[1])
+        } else {
+            None
+        };
+
+        let timeout_ms = if args.len() > 2 {
+            args[2].parse::<u64>().unwrap_or(120000).min(600000)
+        } else {
+            120000
+        };
+
+        let run_in_background = if args.len() > 3 {
+            args[3].parse::<bool>().unwrap_or(false)
         } else {
             false
         };
 
-        let max_depth = if args.len() > 2 {
-            args[2].parse::<usize>().unwrap_or(1)
+        // Safety check
+        self.is_safe_command(command)?;
+
+        info!("Executing command: {}", command);
+
+        if run_in_background {
+            // For background execution, we'd need a process manager
+            // For now, just return a message
+            return Ok(format!(
+                "Background execution not yet implemented. Command would run: {}",
+                command
+            ));
+        }
+
+        // Execute command with timeout
+        let output = tokio::time::timeout(
+            std::time::Duration::from_millis(timeout_ms),
+            tokio::process::Command::new("sh")
+                .current_dir(&self.workspace)
+                .arg("-c")
+                .arg(command)
+                .output(),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Command timed out after {}ms", timeout_ms))?
+        .context("Failed to execute command")?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let exit_code = output.status.code().unwrap_or(-1);
+
+        let result = if output.status.success() {
+            if stdout.is_empty() && stderr.is_empty() {
+                "Command completed successfully (no output)".to_string()
+            } else if stdout.is_empty() {
+                format!("Command completed successfully:\n{}", stderr)
+            } else {
+                format!("Command completed successfully:\n{}", stdout)
+            }
         } else {
-            1
+            let error_output = if stderr.is_empty() { &stdout } else { &stderr };
+            format!(
+                "Command failed with exit code {}:\n{}",
+                exit_code, error_output
+            )
         };
-
-        let mut result = format!("Contents of directory {}:\n", dir_path.display());
-
-        // Helper function to recursively list directory contents
-        fn list_dir_contents(
-            path: &Path,
-            base_path: &Path,
-            prefix: &str,
-            show_hidden: bool,
-            current_depth: usize,
-            max_depth: usize,
-            result: &mut String,
-        ) -> Result<()> {
-            if current_depth > max_depth {
-                return Ok(());
-            }
-
-            let mut entries: Vec<_> = std::fs::read_dir(path)
-                .context(format!("Failed to read directory: {}", path.display()))?
-                .filter_map(Result::ok)
-                .collect();
-
-            // Sort entries by name, directories first
-            entries.sort_by(|a, b| {
-                let a_is_dir = a.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
-                let b_is_dir = b.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
-
-                match (a_is_dir, b_is_dir) {
-                    (true, false) => std::cmp::Ordering::Less,
-                    (false, true) => std::cmp::Ordering::Greater,
-                    _ => a.file_name().cmp(&b.file_name()),
-                }
-            });
-
-            for entry in entries {
-                let entry_path = entry.path();
-                let file_name = entry.file_name().to_string_lossy().to_string();
-
-                // Skip hidden files/directories if not requested
-                if !show_hidden && file_name.starts_with('.') {
-                    continue;
-                }
-
-                let _rel_path = pathdiff::diff_paths(&entry_path, base_path)
-                    .unwrap_or_else(|| entry.path().file_name().unwrap().into());
-                let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
-
-                if is_dir {
-                    result.push_str(&format!("{}📁 {}/\n", prefix, file_name));
-
-                    // Recursively list subdirectories
-                    if current_depth < max_depth {
-                        list_dir_contents(
-                            &entry_path,
-                            base_path,
-                            &format!("{}  ", prefix),
-                            show_hidden,
-                            current_depth + 1,
-                            max_depth,
-                            result,
-                        )?;
-                    } else if max_depth > 0 {
-                        // Indicate there's more but we're not showing it
-                        result.push_str(&format!("{}  ...\n", prefix));
-                    }
-                } else {
-                    // For files, add an icon based on file extension
-                    let icon = match entry_path.extension().and_then(|e| e.to_str()) {
-                        Some("rs") => "🦀",                             // Rust
-                        Some("md" | "txt") => "📄",                     // Documentation
-                        Some("toml" | "json" | "yaml" | "yml") => "⚙️", // Config
-                        Some("gitignore" | "git") => "🔄",              // Git
-                        Some("sh" | "bash") => "⚡",                    // Scripts
-                        Some("png" | "jpg" | "jpeg" | "gif") => "🖼️",   // Images
-                        _ => "📎",                                      // Other files
-                    };
-
-                    result.push_str(&format!("{}{} {}\n", prefix, icon, file_name));
-                }
-            }
-
-            Ok(())
-        }
-
-        // Start the recursive directory listing
-        list_dir_contents(
-            &full_path,
-            &self.workspace,
-            "",
-            show_hidden,
-            1,
-            max_depth,
-            &mut result,
-        )?;
-
-        if max_depth > 1 {
-            result.push_str("\nNote: 📁 indicates directories\n");
-        }
 
         Ok(result)
     }
@@ -957,11 +1053,11 @@ impl LlmTool for CompilationFeedbackTool {
 }
 
 /// A tool that creates a new file
-pub struct CreateFileTool {
+pub struct WriteTool {
     workspace: PathBuf,
 }
 
-impl CreateFileTool {
+impl WriteTool {
     /// Create a new file creation tool
     pub fn new(workspace: PathBuf) -> Self {
         Self { workspace }
@@ -969,9 +1065,9 @@ impl CreateFileTool {
 }
 
 #[async_trait]
-impl LlmTool for CreateFileTool {
+impl LlmTool for WriteTool {
     fn name(&self) -> &str {
-        "create_file"
+        "Write"
     }
 
     fn description(&self) -> &str {
@@ -1033,61 +1129,25 @@ impl LlmTool for CreateFileTool {
 }
 
 /// A tool that modifies an existing file
-pub struct ModifyFileTool {
+pub struct EditTool {
     workspace: PathBuf,
 }
 
-impl ModifyFileTool {
+impl EditTool {
     /// Create a new file modification tool
     pub fn new(workspace: PathBuf) -> Self {
         Self { workspace }
     }
-
-    /// Apply changes to specific lines of a file
-    fn apply_line_specific_changes(
-        &self,
-        content: &str,
-        start_line: usize,
-        end_line: Option<usize>,
-        new_content: &str,
-    ) -> Result<String> {
-        let lines: Vec<&str> = content.lines().collect();
-        let start_idx = start_line.saturating_sub(1);
-        let end_idx = match end_line {
-            Some(end) => std::cmp::min(end, lines.len()),
-            None => start_idx + 1,
-        };
-
-        if start_idx >= lines.len() {
-            return Err(anyhow::anyhow!(
-                "Start line {} is beyond the end of the file",
-                start_line
-            ));
-        }
-
-        let mut result = Vec::new();
-
-        // Add lines before the edit
-        result.extend(lines.iter().take(start_idx).map(|s| s.to_string()));
-
-        // Add the new content
-        result.extend(new_content.lines().map(|s| s.to_string()));
-
-        // Add lines after the edit
-        result.extend(lines.iter().skip(end_idx).map(|s| s.to_string()));
-
-        Ok(result.join("\n"))
-    }
 }
 
 #[async_trait]
-impl LlmTool for ModifyFileTool {
+impl LlmTool for EditTool {
     fn name(&self) -> &str {
-        "modify_file"
+        "Edit"
     }
 
     fn description(&self) -> &str {
-        "Modify an existing file. Can replace the entire content or specific lines."
+        "Edit an existing file by replacing exact string matches. Fails if old_string is not found or not unique (unless replace_all is true)."
     }
 
     fn parameters(&self) -> Vec<ToolParameter> {
@@ -1100,35 +1160,34 @@ impl LlmTool for ModifyFileTool {
                 param_type: Some(ToolParameterType::String),
             },
             ToolParameter {
-                name: "new_content".to_string(),
-                description: "New content or replacement content for the file".to_string(),
+                name: "old_string".to_string(),
+                description: "Exact string to find and replace in the file".to_string(),
                 required: true,
                 default_value: None,
                 param_type: Some(ToolParameterType::Code),
             },
             ToolParameter {
-                name: "start_line".to_string(),
-                description: "Starting line number for partial modifications (1-indexed)"
-                    .to_string(),
-                required: false,
+                name: "new_string".to_string(),
+                description: "String to replace old_string with".to_string(),
+                required: true,
                 default_value: None,
-                param_type: Some(ToolParameterType::Integer),
+                param_type: Some(ToolParameterType::Code),
             },
             ToolParameter {
-                name: "end_line".to_string(),
-                description: "Ending line number for partial modifications (1-indexed, inclusive)"
+                name: "replace_all".to_string(),
+                description: "If true, replace all occurrences. If false (default), fail if old_string appears more than once"
                     .to_string(),
                 required: false,
-                default_value: None,
-                param_type: Some(ToolParameterType::Integer),
+                default_value: Some("false".to_string()),
+                param_type: Some(ToolParameterType::Boolean),
             },
         ]
     }
 
     async fn execute(&self, args: &[&str]) -> Result<String> {
-        if args.len() < 2 {
+        if args.len() < 3 {
             return Err(anyhow::anyhow!(
-                "Both file_path and new_content are required"
+                "file_path, old_string, and new_string are all required"
             ));
         }
 
@@ -1147,38 +1206,56 @@ impl LlmTool for ModifyFileTool {
         let current_content = std::fs::read_to_string(&full_path)
             .context(format!("Failed to read file: {}", file_path.display()))?;
 
-        let new_content = args[1];
-
-        // Parse line range if specified
-        let result = if args.len() > 2 {
-            let start_line = args[2]
-                .parse::<usize>()
-                .context("Invalid start_line: must be a positive integer")?;
-
-            let end_line = if args.len() > 3 {
-                Some(
-                    args[3]
-                        .parse::<usize>()
-                        .context("Invalid end_line: must be a positive integer")?,
-                )
-            } else {
-                None
-            };
-
-            self.apply_line_specific_changes(&current_content, start_line, end_line, new_content)?
+        let old_string = args[1];
+        let new_string = args[2];
+        let replace_all = if args.len() > 3 {
+            args[3].parse::<bool>().unwrap_or(false)
         } else {
-            // Replace entire content
-            new_content.to_string()
+            false
+        };
+
+        // Check if old_string exists in the file
+        if !current_content.contains(old_string) {
+            return Err(anyhow::anyhow!(
+                "String not found in file: {}",
+                file_path.display()
+            ));
+        }
+
+        // Count occurrences of old_string
+        let occurrences = current_content.matches(old_string).count();
+
+        // If replace_all is false and there are multiple occurrences, fail
+        if !replace_all && occurrences > 1 {
+            return Err(anyhow::anyhow!(
+                "String appears {} times in file (not unique). Use replace_all=true to replace all occurrences, or provide a more specific old_string.",
+                occurrences
+            ));
+        }
+
+        // Perform the replacement
+        let result = if replace_all {
+            current_content.replace(old_string, new_string)
+        } else {
+            // Replace only the first (and only) occurrence
+            current_content.replacen(old_string, new_string, 1)
         };
 
         // Write the modified content back to the file
         std::fs::write(&full_path, result)
             .context(format!("Failed to write to file: {:?}", full_path))?;
 
-        Ok(format!(
-            "Successfully modified file: {}",
-            file_path.display()
-        ))
+        let message = if replace_all {
+            format!(
+                "Successfully modified file: {} ({} occurrence(s) replaced)",
+                file_path.display(),
+                occurrences
+            )
+        } else {
+            format!("Successfully modified file: {}", file_path.display())
+        };
+
+        Ok(message)
     }
 }
 
@@ -1403,6 +1480,472 @@ impl LlmTool for TestRunnerTool {
                 Ok(result)
             }
             Err(e) => Err(anyhow::anyhow!("Failed to run tests: {}", e)),
+        }
+    }
+}
+
+/// Tool for fetching web content from URLs
+pub struct WebFetchTool {
+    client: reqwest::Client,
+}
+
+impl WebFetchTool {
+    /// Create a new web fetch tool
+    pub fn new() -> Self {
+        let client = reqwest::Client::builder()
+            .user_agent("Borg/1.0 (Autonomous Agent)")
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        Self { client }
+    }
+
+    /// Extract text content from HTML (basic extraction)
+    fn extract_text_from_html(html: &str) -> String {
+        // Remove script and style tags
+        let re_script = regex::Regex::new(r"(?is)<script[^>]*>.*?</script>").unwrap();
+        let re_style = regex::Regex::new(r"(?is)<style[^>]*>.*?</style>").unwrap();
+        let re_tags = regex::Regex::new(r"<[^>]+>").unwrap();
+        let re_whitespace = regex::Regex::new(r"\s+").unwrap();
+
+        let mut text = html.to_string();
+        text = re_script.replace_all(&text, " ").to_string();
+        text = re_style.replace_all(&text, " ").to_string();
+        text = re_tags.replace_all(&text, " ").to_string();
+        text = re_whitespace.replace_all(&text, " ").to_string();
+
+        // Decode common HTML entities
+        text = text
+            .replace("&nbsp;", " ")
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'");
+
+        text.trim().to_string()
+    }
+}
+
+/// A tool that tracks and displays todo progress
+pub struct TodoWriteTool;
+
+impl TodoWriteTool {
+    /// Create a new TodoWrite tool
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for TodoWriteTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl LlmTool for TodoWriteTool {
+    fn name(&self) -> &str {
+        "TodoWrite"
+    }
+
+    fn description(&self) -> &str {
+        "Track and display todo list progress. Updates the current todo list with new items or status changes."
+    }
+
+    fn parameters(&self) -> Vec<ToolParameter> {
+        vec![ToolParameter {
+            name: "todos".to_string(),
+            description: "JSON string containing array of todo items. Each item has: content (String), status (String: pending/in_progress/completed), activeForm (String)".to_string(),
+            required: true,
+            default_value: None,
+            param_type: Some(ToolParameterType::String),
+        }]
+    }
+
+    async fn execute(&self, args: &[&str]) -> Result<String> {
+        if args.is_empty() {
+            return Err(anyhow::anyhow!("todos parameter is required"));
+        }
+
+        let todos_json = args[0];
+
+        // Parse the JSON input
+        let todos: Vec<serde_json::Value> = serde_json::from_str(todos_json)
+            .map_err(|e| anyhow::anyhow!("Failed to parse todos JSON: {}", e))?;
+
+        if todos.is_empty() {
+            return Ok("Todo list is empty".to_string());
+        }
+
+        // Format and return a status message showing the todo list
+        let mut result = String::from("Todo List:\n");
+
+        for (idx, todo) in todos.iter().enumerate() {
+            let content = todo["content"].as_str().unwrap_or("(no content)");
+            let status = todo["status"].as_str().unwrap_or("pending");
+            let _active_form = todo["activeForm"].as_str().unwrap_or(content);
+
+            let status_icon = match status {
+                "completed" => "✓",
+                "in_progress" => "→",
+                _ => "○",
+            };
+
+            result.push_str(&format!("{}. {} {}\n", idx + 1, status_icon, content));
+        }
+
+        Ok(result)
+    }
+}
+
+impl Default for WebFetchTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl LlmTool for WebFetchTool {
+    fn name(&self) -> &str {
+        "WebFetch"
+    }
+
+    fn description(&self) -> &str {
+        "Fetch content from a URL to get factual information from the web. \
+         Useful for looking up documentation, APIs, or current information."
+    }
+
+    fn parameters(&self) -> Vec<ToolParameter> {
+        vec![ToolParameter {
+            name: "url".to_string(),
+            description: "The URL to fetch content from".to_string(),
+            required: true,
+            default_value: None,
+            param_type: Some(ToolParameterType::String),
+        }]
+    }
+
+    async fn execute(&self, args: &[&str]) -> Result<String> {
+        if args.is_empty() {
+            return Err(anyhow::anyhow!("URL is required"));
+        }
+
+        let url = args[0].trim();
+        if !url.starts_with("http://") && !url.starts_with("https://") {
+            return Err(anyhow::anyhow!(
+                "Invalid URL: must start with http:// or https://"
+            ));
+        }
+
+        // Fetch the URL
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to fetch URL: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(anyhow::anyhow!(
+                "HTTP error: {} {}",
+                response.status().as_u16(),
+                response.status().canonical_reason().unwrap_or("Unknown")
+            ));
+        }
+
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_lowercase();
+
+        let body = response
+            .text()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to read response: {}", e))?;
+
+        // Extract text from HTML or return raw for other content types
+        let text = if content_type.contains("text/html") {
+            Self::extract_text_from_html(&body)
+        } else {
+            body
+        };
+
+        // Limit output size
+        let max_chars = 8000;
+        if text.len() > max_chars {
+            Ok(format!(
+                "{}\n\n[Content truncated, showing first {} characters]",
+                &text[..max_chars],
+                max_chars
+            ))
+        } else {
+            Ok(text)
+        }
+    }
+}
+
+/// Tool for searching the web using DuckDuckGo
+pub struct WebSearchTool {
+    client: reqwest::Client,
+}
+
+impl WebSearchTool {
+    /// Create a new web search tool
+    pub fn new() -> Self {
+        let client = reqwest::Client::builder()
+            .user_agent("Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0")
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        Self { client }
+    }
+
+    /// Parse DuckDuckGo HTML search results
+    fn parse_search_results(html: &str) -> Vec<(String, String, String)> {
+        let mut results = Vec::new();
+
+        // Parse search results from DuckDuckGo HTML
+        // Each result is in a div with class "result" or "web-result"
+        let result_re = regex::Regex::new(
+            r#"(?is)<div[^>]*class="[^"]*(?:result|web-result)[^"]*"[^>]*>.*?</div>"#,
+        )
+        .unwrap_or_else(|_| regex::Regex::new(r"").unwrap());
+
+        // Extract title from result__a or result__title
+        let title_re =
+            regex::Regex::new(r#"(?is)<a[^>]*class="[^"]*result__a[^"]*"[^>]*>(.*?)</a>"#)
+                .unwrap_or_else(|_| regex::Regex::new(r"").unwrap());
+
+        // Extract URL from href
+        let url_re = regex::Regex::new(r#"(?is)href="//duckduckgo\.com/l/\?uddg=([^"&]+)"#)
+            .unwrap_or_else(|_| regex::Regex::new(r"").unwrap());
+
+        // Alternative URL extraction
+        let url_direct_re = regex::Regex::new(r#"(?is)href="(https?://[^"]+)""#)
+            .unwrap_or_else(|_| regex::Regex::new(r"").unwrap());
+
+        // Extract snippet from result__snippet
+        let snippet_re =
+            regex::Regex::new(r#"(?is)<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>(.*?)</a>"#)
+                .unwrap_or_else(|_| regex::Regex::new(r"").unwrap());
+
+        // Pre-compile regex for stripping HTML tags (used in loop)
+        let tag_stripper = regex::Regex::new(r"<[^>]+>").unwrap();
+
+        for result_match in result_re.find_iter(html).take(10) {
+            let result_html = result_match.as_str();
+
+            // Extract title
+            let title = title_re
+                .captures(result_html)
+                .and_then(|cap| cap.get(1))
+                .map(|m| {
+                    let raw = m.as_str();
+                    // Remove HTML tags and decode entities
+                    let clean = tag_stripper.replace_all(raw, "");
+                    clean
+                        .replace("&nbsp;", " ")
+                        .replace("&amp;", "&")
+                        .replace("&lt;", "<")
+                        .replace("&gt;", ">")
+                        .replace("&quot;", "\"")
+                        .replace("&#39;", "'")
+                        .trim()
+                        .to_string()
+                })
+                .unwrap_or_default();
+
+            // Extract URL
+            let url = url_re
+                .captures(result_html)
+                .and_then(|cap| cap.get(1))
+                .map(|m| {
+                    // URL decode
+                    urlencoding::decode(m.as_str())
+                        .unwrap_or_default()
+                        .to_string()
+                })
+                .or_else(|| {
+                    url_direct_re
+                        .captures(result_html)
+                        .and_then(|cap| cap.get(1))
+                        .map(|m| m.as_str().to_string())
+                })
+                .unwrap_or_default();
+
+            // Extract snippet
+            let snippet = snippet_re
+                .captures(result_html)
+                .and_then(|cap| cap.get(1))
+                .map(|m| {
+                    let raw = m.as_str();
+                    // Remove HTML tags and decode entities
+                    let clean = tag_stripper.replace_all(raw, "");
+                    clean
+                        .replace("&nbsp;", " ")
+                        .replace("&amp;", "&")
+                        .replace("&lt;", "<")
+                        .replace("&gt;", ">")
+                        .replace("&quot;", "\"")
+                        .replace("&#39;", "'")
+                        .trim()
+                        .to_string()
+                })
+                .unwrap_or_default();
+
+            if !title.is_empty() && !url.is_empty() {
+                results.push((title, url, snippet));
+            }
+        }
+
+        results
+    }
+}
+
+impl Default for WebSearchTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl LlmTool for WebSearchTool {
+    fn name(&self) -> &str {
+        "WebSearch"
+    }
+
+    fn description(&self) -> &str {
+        "Search the web using DuckDuckGo to find relevant information. \
+         Returns a list of search results with titles, URLs, and snippets."
+    }
+
+    fn parameters(&self) -> Vec<ToolParameter> {
+        vec![
+            ToolParameter {
+                name: "query".to_string(),
+                description: "The search query to execute".to_string(),
+                required: true,
+                default_value: None,
+                param_type: Some(ToolParameterType::String),
+            },
+            ToolParameter {
+                name: "allowed_domains".to_string(),
+                description: "Optional comma-separated list of domains to restrict search to (e.g., 'github.com,docs.rs')".to_string(),
+                required: false,
+                default_value: None,
+                param_type: Some(ToolParameterType::String),
+            },
+            ToolParameter {
+                name: "blocked_domains".to_string(),
+                description: "Optional comma-separated list of domains to exclude from search (e.g., 'example.com,spam.com')".to_string(),
+                required: false,
+                default_value: None,
+                param_type: Some(ToolParameterType::String),
+            },
+        ]
+    }
+
+    async fn execute(&self, args: &[&str]) -> Result<String> {
+        if args.is_empty() {
+            return Err(anyhow::anyhow!("Search query is required"));
+        }
+
+        let query = args[0].trim();
+        if query.is_empty() {
+            return Err(anyhow::anyhow!("Search query cannot be empty"));
+        }
+
+        // Parse optional domain filters
+        let allowed_domains: Option<Vec<String>> = if args.len() > 1 && !args[1].is_empty() {
+            Some(
+                args[1]
+                    .split(',')
+                    .map(|s| s.trim().to_lowercase())
+                    .collect(),
+            )
+        } else {
+            None
+        };
+
+        let blocked_domains: Option<Vec<String>> = if args.len() > 2 && !args[2].is_empty() {
+            Some(
+                args[2]
+                    .split(',')
+                    .map(|s| s.trim().to_lowercase())
+                    .collect(),
+            )
+        } else {
+            None
+        };
+
+        // Build DuckDuckGo search URL
+        let search_url = format!(
+            "https://html.duckduckgo.com/html/?q={}",
+            urlencoding::encode(query)
+        );
+
+        info!("Searching DuckDuckGo: {}", query);
+
+        // Fetch search results
+        let response = self
+            .client
+            .get(&search_url)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to execute search: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(anyhow::anyhow!(
+                "Search failed with HTTP error: {} {}",
+                response.status().as_u16(),
+                response.status().canonical_reason().unwrap_or("Unknown")
+            ));
+        }
+
+        let html = response
+            .text()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to read search results: {}", e))?;
+
+        // Parse search results
+        let mut results = Self::parse_search_results(&html);
+
+        // Apply domain filters
+        if let Some(ref allowed) = allowed_domains {
+            results.retain(|(_, url, _)| {
+                allowed
+                    .iter()
+                    .any(|domain| url.to_lowercase().contains(domain))
+            });
+        }
+
+        if let Some(ref blocked) = blocked_domains {
+            results.retain(|(_, url, _)| {
+                !blocked
+                    .iter()
+                    .any(|domain| url.to_lowercase().contains(domain))
+            });
+        }
+
+        // Format results
+        if results.is_empty() {
+            Ok(format!("No search results found for query: {}", query))
+        } else {
+            let mut output = format!("Search results for '{}':\n\n", query);
+
+            for (idx, (title, url, snippet)) in results.iter().enumerate().take(10) {
+                output.push_str(&format!("{}. {}\n", idx + 1, title));
+                output.push_str(&format!("   URL: {}\n", url));
+                if !snippet.is_empty() {
+                    output.push_str(&format!("   {}\n", snippet));
+                }
+                output.push('\n');
+            }
+
+            Ok(output)
         }
     }
 }

@@ -6,12 +6,18 @@
 //! - No agent/lens complexity - config drives everything
 
 use anyhow::Result;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::code_generation::llm::{LlmFactory, LlmProvider};
-use crate::core::config::{Config, LlmConfig, LlmLoggingConfig, ModelConfig};
+use crate::code_generation::llm_tool::{
+    BashTool, CompilationFeedbackTool, EditTool, FindTestsTool, GitCommandTool, GitHistoryTool,
+    GrepTool, ReadTool, TestRunnerTool, TodoWriteTool, ToolRegistry, WebFetchTool, WebSearchTool,
+    WriteTool,
+};
+use crate::core::config::{Config, LlmConfig, LlmLoggingConfig, ModelConfig, PhaseConfig};
 use crate::providers::ResponseFormat;
 use crate::testing::test_runner::TestRunner;
 use crate::version_control::git::GitManager;
@@ -114,6 +120,75 @@ impl SwarmCoordinator {
         LlmFactory::create(llm_config, llm_logging)
     }
 
+    /// Create a ToolRegistry filtered by the phase's allowed tools
+    fn create_tool_registry(
+        phase: &PhaseConfig,
+        workspace: &Path,
+        git_manager: Arc<Mutex<dyn GitManager>>,
+    ) -> ToolRegistry {
+        let mut registry = ToolRegistry::new();
+        let allowed_tools: std::collections::HashSet<&str> =
+            phase.tools.iter().map(|s| s.as_str()).collect();
+
+        // Register only the tools that are allowed for this phase
+        // Read tools (supporting new names: Read, Grep, Glob and old names)
+        if allowed_tools.contains("Read") || allowed_tools.contains("file_contents") {
+            registry.register(ReadTool::new(workspace.to_path_buf()));
+        }
+        if allowed_tools.contains("Grep") || allowed_tools.contains("code_search") {
+            registry.register(GrepTool::new(workspace.to_path_buf(), git_manager.clone()));
+        }
+        if allowed_tools.contains("Glob") || allowed_tools.contains("explore_dir") {
+            registry.register(BashTool::new(workspace.to_path_buf()));
+        }
+        if allowed_tools.contains("find_tests") {
+            registry.register(FindTestsTool::new(workspace.to_path_buf()));
+        }
+        if allowed_tools.contains("git_history") {
+            registry.register(GitHistoryTool::new(
+                workspace.to_path_buf(),
+                git_manager.clone(),
+            ));
+        }
+        if allowed_tools.contains("compile_check") {
+            registry.register(CompilationFeedbackTool::new(workspace.to_path_buf()));
+        }
+        if allowed_tools.contains("run_tests") {
+            registry.register(TestRunnerTool::new(workspace.to_path_buf()));
+        }
+        if allowed_tools.contains("WebSearch") || allowed_tools.contains("web_search") {
+            registry.register(WebSearchTool::new());
+        }
+        if allowed_tools.contains("WebFetch") {
+            registry.register(WebFetchTool::new());
+        }
+
+        // Write tools (supporting new names: Write, Edit, Bash and old names)
+        if allowed_tools.contains("Write") || allowed_tools.contains("create_file") {
+            registry.register(WriteTool::new(workspace.to_path_buf()));
+        }
+        if allowed_tools.contains("Edit") || allowed_tools.contains("modify_file") {
+            registry.register(EditTool::new(workspace.to_path_buf()));
+        }
+        if allowed_tools.contains("Bash") || allowed_tools.contains("git_command") {
+            registry.register(GitCommandTool::new(workspace.to_path_buf()));
+        }
+
+        // TodoWrite tool (coordinator-level tracking)
+        if allowed_tools.contains("TodoWrite") {
+            registry.register(TodoWriteTool::new());
+        }
+
+        // Note: Task tool is NOT added to the registry - it's coordinator-level only
+        // to prevent recursion
+
+        debug!(
+            "Created tool registry with {} tools for phase",
+            phase.tools.len()
+        );
+        registry
+    }
+
     /// Run a single swarm cycle
     pub async fn run_cycle(&self, codebase_context: &str) -> Result<SwarmCycleResult> {
         info!("Starting swarm cycle");
@@ -195,20 +270,32 @@ impl SwarmCoordinator {
 
     /// Phase 1: Research - run research prompt on all configured models
     async fn research_phase(&self, codebase_context: &str) -> Result<Vec<Proposal>> {
+        let phase = &self.config.phases.research;
         info!(
-            "Research phase using {} models",
-            self.config.phases.research.models.len()
+            "Research phase using {} models, {} tools available",
+            phase.models.len(),
+            phase.tools.len()
         );
 
+        if !phase.tools.is_empty() {
+            debug!("Available tools: {:?}", phase.tools);
+            // Create tool registry for this phase
+            let workspace = PathBuf::from(&self.config.agent.working_dir);
+            let _tool_registry =
+                Self::create_tool_registry(phase, &workspace, self.git_manager.clone());
+            // TODO: Wire tool_registry into the LLM conversation loop
+            // This requires multi-turn conversation support with tool calls
+        }
+
         let mut proposals = Vec::new();
-        let prompt_template = &self.config.phases.research.prompt;
+        let prompt_template = &phase.prompt;
 
         // Substitute {{context}} placeholder
         let prompt = prompt_template.replace("{{context}}", codebase_context);
 
         // Run the same prompt on all research models
         let mut futures = Vec::new();
-        for model_name in &self.config.phases.research.models {
+        for model_name in &phase.models {
             if let Some(model_config) = self.config.get_model(model_name) {
                 let model_config = model_config.clone();
                 let log_dir = self.config.logging.llm_log_dir.clone();

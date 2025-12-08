@@ -13,9 +13,8 @@ use uuid::Uuid;
 use crate::code_generation::generator::{CodeContext, CodeGenerator, CodeImprovement, FileChange};
 use crate::code_generation::llm::{LlmFactory, LlmProvider};
 use crate::code_generation::llm_tool::{
-    CodeSearchTool, CompilationFeedbackTool, CreateFileTool, DirectoryExplorationTool,
-    FileContentsTool, FindTestsTool, GitCommandTool, GitHistoryTool, LlmTool, ModifyFileTool,
-    TestRunnerTool, ToolCall, ToolRegistry, ToolResult,
+    BashTool, CompilationFeedbackTool, EditTool, FindTestsTool, GitCommandTool, GitHistoryTool,
+    GrepTool, LlmTool, ReadTool, TestRunnerTool, ToolCall, ToolRegistry, ToolResult, WriteTool,
 };
 use crate::code_generation::prompt::PromptManager;
 use crate::core::config::{CodeGenerationConfig, LlmConfig, LlmLoggingConfig};
@@ -91,20 +90,18 @@ impl LlmCodeGenerator {
         let mut tool_registry = ToolRegistry::new();
 
         // Register available tools
-        tool_registry.register(CodeSearchTool::new(
-            workspace.clone(),
-            Arc::clone(&git_manager),
-        ));
-        tool_registry.register(FileContentsTool::new(workspace.clone()));
+        tool_registry.register(GrepTool::new(workspace.clone(), Arc::clone(&git_manager)));
+        tool_registry.register(ReadTool::new(workspace.clone()));
         tool_registry.register(FindTestsTool::new(workspace.clone()));
-        tool_registry.register(DirectoryExplorationTool::new(workspace.clone()));
+        tool_registry.register(BashTool::new(workspace.clone()));
+        tool_registry.register(BashTool::new(workspace.clone()));
         tool_registry.register(GitHistoryTool::new(
             workspace.clone(),
             Arc::clone(&git_manager),
         ));
         tool_registry.register(CompilationFeedbackTool::new(workspace.clone()));
-        tool_registry.register(CreateFileTool::new(workspace.clone()));
-        tool_registry.register(ModifyFileTool::new(workspace.clone()));
+        tool_registry.register(WriteTool::new(workspace.clone()));
+        tool_registry.register(EditTool::new(workspace.clone()));
         tool_registry.register(GitCommandTool::new(workspace.clone()));
         tool_registry.register(TestRunnerTool::new(workspace.clone()));
 

@@ -37,9 +37,17 @@ models:
     temperature: 0.7
 
 # Phase configurations - each has ONE prompt, run on multiple models
+# Available tools:
+#   File operations: Read, Write, Edit
+#   Execution:       Bash
+#   Search:          Grep, Glob
+#   Web:             WebSearch, WebFetch
+#   Agent:           Task (main agent only)
+#   Task management: TodoWrite
 phases:
   research:
     models: [claude-opus, gemini-pro, gpt-4, local-llama]
+    tools: [Read, Grep, Glob, WebSearch]
     prompt: |
       You are evaluating potential improvements to a codebase for human flourishing.
 
@@ -77,6 +85,7 @@ phases:
 
   deliberation:
     models: [claude-opus, gemini-pro, gpt-4]
+    tools: []  # Pure reasoning, no tools needed
     prompt: |
       Score this proposal from 0.0 to 1.0 for human flourishing.
 
@@ -105,6 +114,7 @@ phases:
 
   tdd:
     models: [claude-opus, gemini-pro]
+    tools: [Read, Write, Edit, Grep, Glob, Bash]
     prompt: |
       Implement this approved proposal using Test-Driven Development.
 

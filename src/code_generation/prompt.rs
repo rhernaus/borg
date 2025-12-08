@@ -392,9 +392,9 @@ For safety reasons, certain destructive Git commands are restricted:
 
 If a merge conflict occurs:
 1. Identify conflicted files from command output
-2. Use FileContentsTool to read the conflicted files
+2. Use ReadTool to read the conflicted files
 3. Analyze the conflicts (marked with <<<<<<< HEAD, =======, and >>>>>>> branch)
-4. Use ModifyFileTool to resolve conflicts
+4. Use EditTool to resolve conflicts
 5. Stage resolved files: `{"tool": "git_command", "args": ["add", "<resolved-files>"]}`
 6. Complete the merge: `{"tool": "git_command", "args": ["commit", "-m", "Resolve merge conflicts"]}`
 
