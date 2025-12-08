@@ -105,7 +105,6 @@ pub struct CodeContext {
     pub current_attempt: Option<u32>,
 
     // TDD-specific fields
-
     /// The specification for this change (generated in TDD flow)
     pub specification: Option<Specification>,
 

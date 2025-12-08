@@ -1,0 +1,151 @@
+# =============================================================================
+# BORG AGENT CONFIGURATION
+# =============================================================================
+# Copy this file to config.yaml and fill in your API keys
+
+# Model configurations - named LLM backends
+models:
+  - name: claude-opus
+    provider: anthropic
+    api_key: ${ANTHROPIC_API_KEY}
+    model: claude-opus-4-5-20251101
+    max_tokens: 16384
+    temperature: 0.0
+    enable_thinking: true
+    reasoning_effort: High
+    reasoning_budget_tokens: 32000
+
+  - name: gemini-pro
+    provider: google
+    api_key: ${GOOGLE_API_KEY}
+    model: gemini-2.0-flash
+    max_tokens: 8192
+    temperature: 0.3
+
+  - name: gpt-4
+    provider: openai
+    api_key: ${OPENAI_API_KEY}
+    model: gpt-4o
+    max_tokens: 16384
+    temperature: 0.0
+
+  - name: local-llama
+    provider: ollama
+    api_base: http://localhost:11434
+    model: llama3:70b
+    max_tokens: 4096
+    temperature: 0.7
+
+# Phase configurations - each has ONE prompt, run on multiple models
+phases:
+  research:
+    models: [claude-opus, gemini-pro, gpt-4, local-llama]
+    prompt: |
+      You are evaluating potential improvements to a codebase for human flourishing.
+
+      Consider ALL dimensions of the FAI Benchmark:
+
+      1. CHARACTER & VIRTUE: Does this promote ethical behavior, integrity, self-regulation?
+      2. RELATIONSHIPS: Does this foster collaboration, authentic connection, community?
+      3. HEALTH: Does this support mental well-being, reduce stress, build resilience?
+      4. FINANCES: Is this resource-efficient, sustainable, cost-effective?
+      5. MEANING: Does this support purposeful work, worthwhile activities, deep focus?
+      6. HAPPINESS: Does this contribute to long-term life satisfaction (eudaimonic)?
+      7. TRANSCENDENCE: Does this align with higher purpose, lasting positive impact?
+
+      Constitutional constraints (must respect):
+      - CORRIGIBILITY: Never block shutdown, maintain human oversight
+      - SAFETY: No destructive operations, preserve data integrity
+      - LOW IMPACT: Prefer reversible, minimal changes
+
+      CODEBASE CONTEXT:
+      {{context}}
+
+      Propose ONE specific improvement that maximizes human flourishing.
+
+      Respond in JSON:
+      {
+        "title": "Brief title",
+        "description": "Detailed description of the change",
+        "rationale": "Why this improves human flourishing (reference specific FAI dimensions)",
+        "files_to_modify": ["path/to/file.rs"],
+        "files_to_create": [],
+        "estimated_lines_changed": 50,
+        "expected_benefits": ["benefit1", "benefit2"],
+        "potential_risks": ["risk1"]
+      }
+
+  deliberation:
+    models: [claude-opus, gemini-pro, gpt-4]
+    prompt: |
+      Score this proposal from 0.0 to 1.0 for human flourishing.
+
+      Scoring guide:
+      - 0.0 = VETO (proposal should NOT proceed - harmful or violates constraints)
+      - 0.5 = Neutral (minor improvement, acceptable)
+      - 1.0 = Strong approval (significant positive impact)
+
+      Evaluate across ALL FAI dimensions:
+      - Character & Virtue, Relationships, Health, Finances, Meaning, Happiness, Transcendence
+
+      Check constitutional constraints:
+      - Corrigibility, Safety, Low Impact
+
+      PROPOSAL TO EVALUATE:
+      {{proposal}}
+
+      Respond in JSON:
+      {
+        "score": 0.85,
+        "rationale": "Why this score",
+        "strengths": ["strength1", "strength2"],
+        "concerns": ["concern1"],
+        "suggestions": ["suggestion1"]
+      }
+
+  tdd:
+    models: [claude-opus, gemini-pro]
+    prompt: |
+      Implement this approved proposal using Test-Driven Development.
+
+      Balance these engineering perspectives:
+      - ARCHITECT: Long-term maintainability, clean structure, extensibility
+      - PRAGMATIST: Simplicity, minimum viable solution, deliverability
+      - CRITIC: Edge cases, failure modes, defensive programming
+      - SECURITY: Attack surfaces, data protection, least privilege
+
+      APPROVED PROPOSAL:
+      {{proposal}}
+
+      EXISTING CODEBASE CONTEXT:
+      {{context}}
+
+      Generate in order:
+      1. Test specification (what should be tested)
+      2. Test code (Rust #[test] functions)
+      3. Implementation (code that passes tests)
+
+      Respond in JSON:
+      {
+        "test_spec": "Description of test coverage",
+        "tests": "// Rust test code...",
+        "implementation": "// Rust implementation code...",
+        "files_modified": [{"path": "src/foo.rs", "changes": "..."}]
+      }
+
+# Runtime settings
+agent:
+  working_dir: ./workspace
+  timeout_seconds: 120
+  max_memory_usage_mb: 4096
+  max_cpu_usage_percent: 80
+
+database:
+  path: ./data/borg.db
+
+git:
+  branch_prefix: borg/improvement/
+
+logging:
+  enabled: true
+  llm_log_dir: ./logs/llm

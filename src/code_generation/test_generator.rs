@@ -70,8 +70,11 @@ impl TestGenerator {
     fn build_test_prompt(&self, spec: &Specification, context: &CodeContext) -> String {
         let mut prompt = String::new();
 
-        prompt.push_str("You are a test engineer. Generate Rust tests for the following specification.\n");
-        prompt.push_str("The tests should verify ALL acceptance criteria and expected behaviors.\n");
+        prompt.push_str(
+            "You are a test engineer. Generate Rust tests for the following specification.\n",
+        );
+        prompt
+            .push_str("The tests should verify ALL acceptance criteria and expected behaviors.\n");
         prompt.push_str("Tests should FAIL initially (red phase of TDD) since the implementation doesn't exist yet.\n\n");
 
         prompt.push_str("## Specification\n");

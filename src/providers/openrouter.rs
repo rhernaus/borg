@@ -11,7 +11,7 @@ use tokio::time::timeout;
 use crate::core::config::LlmConfig;
 use crate::core::error::ProviderError;
 use crate::providers::{
-    ContentPart, GenerateRequest, GenerateResponse, Role, SseDecoder, StreamEvent,
+    ContentPart, GenerateRequest, GenerateResponse, ResponseFormat, Role, SseDecoder, StreamEvent,
     ToolCallNormalized, ToolChoice, ToolSpec, Usage,
 };
 
@@ -127,6 +127,20 @@ impl OpenRouterProvider {
             Some(ToolChoice::None) => Some(json!("none")),
             None => None,
         }
+    }
+
+    fn map_response_format(format: &Option<ResponseFormat>) -> Option<JsonValue> {
+        format.as_ref().map(|f| match f {
+            ResponseFormat::JsonObject => json!({"type": "json_object"}),
+            ResponseFormat::JsonSchema { json_schema } => json!({
+                "type": "json_schema",
+                "json_schema": {
+                    "name": json_schema.name,
+                    "strict": json_schema.strict,
+                    "schema": json_schema.schema
+                }
+            }),
+        })
     }
 
     fn apply_headers(
@@ -295,6 +309,13 @@ impl crate::providers::Provider for OpenRouterProvider {
             }
         }
 
+        // Response format for structured outputs
+        if let Some(rf) = Self::map_response_format(&req.response_format) {
+            if let Some(obj) = payload.as_object_mut() {
+                obj.insert("response_format".to_string(), rf);
+            }
+        }
+
         // Send request
         let rb = self.client.post(&url);
         let rb = self.apply_headers(rb, &req, false);
@@ -449,6 +470,13 @@ impl crate::providers::Provider for OpenRouterProvider {
         if let Some(tc) = Self::map_tool_choice_openai(&req.tool_choice) {
             if let Some(obj) = payload.as_object_mut() {
                 obj.insert("tool_choice".to_string(), tc);
+            }
+        }
+
+        // Response format for structured outputs
+        if let Some(rf) = Self::map_response_format(&req.response_format) {
+            if let Some(obj) = payload.as_object_mut() {
+                obj.insert("response_format".to_string(), rf);
             }
         }
 

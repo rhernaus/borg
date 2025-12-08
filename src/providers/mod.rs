@@ -7,7 +7,9 @@ use std::collections::HashMap;
 use crate::core::error::ProviderError;
 
 pub mod anthropic;
+pub mod ollama;
 pub mod openrouter;
+pub mod rate_limiter;
 /// Common metadata map for provider hints/headers
 pub type Metadata = HashMap<String, String>;
 
@@ -64,6 +66,40 @@ pub struct ToolSpec {
     pub json_schema: Option<JsonValue>,
 }
 
+/// Response format configuration for structured outputs
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponseFormat {
+    /// Basic JSON mode - ensures valid JSON output
+    JsonObject,
+    /// Structured outputs with JSON Schema validation
+    JsonSchema { json_schema: JsonSchemaConfig },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonSchemaConfig {
+    pub name: String,
+    #[serde(default)]
+    pub strict: bool,
+    pub schema: serde_json::Value,
+}
+
+impl ResponseFormat {
+    pub fn json_object() -> Self {
+        ResponseFormat::JsonObject
+    }
+
+    pub fn json_schema(name: String, schema: serde_json::Value) -> Self {
+        ResponseFormat::JsonSchema {
+            json_schema: JsonSchemaConfig {
+                name,
+                strict: true,
+                schema,
+            },
+        }
+    }
+}
+
 /// Normalized tool call emitted by providers
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallNormalized {
@@ -108,7 +144,7 @@ pub struct GenerateRequest {
     #[serde(default)]
     pub logit_bias: Option<HashMap<String, f32>>,
     #[serde(default)]
-    pub response_format: Option<String>,
+    pub response_format: Option<ResponseFormat>,
 
     /// Canonical field to cap output tokens; providers map to their own keys
     #[serde(default)]

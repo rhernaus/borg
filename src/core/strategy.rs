@@ -6,7 +6,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::core::authentication::AuthenticationManager;
 use crate::core::ethics::EthicsManager;
 use crate::core::optimization::OptimizationGoal;
 
@@ -173,10 +172,6 @@ pub struct StrategyManager {
     /// Available strategies
     strategies: Vec<Box<dyn Strategy>>,
 
-    /// Authentication manager for permission checks
-    #[allow(dead_code)]
-    auth_manager: Arc<Mutex<AuthenticationManager>>,
-
     /// Ethics manager for ethical validation
     #[allow(dead_code)]
     ethics_manager: Arc<Mutex<EthicsManager>>,
@@ -187,13 +182,9 @@ pub struct StrategyManager {
 
 impl StrategyManager {
     /// Create a new strategy manager
-    pub fn new(
-        auth_manager: Arc<Mutex<AuthenticationManager>>,
-        ethics_manager: Arc<Mutex<EthicsManager>>,
-    ) -> Self {
+    pub fn new(ethics_manager: Arc<Mutex<EthicsManager>>) -> Self {
         Self {
             strategies: Vec::new(),
-            auth_manager,
             ethics_manager,
             compatibility_cache: HashMap::new(),
         }

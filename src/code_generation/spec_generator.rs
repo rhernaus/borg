@@ -124,9 +124,13 @@ impl SpecGenerator {
         prompt.push_str("## Output Format\n");
         prompt.push_str("Respond with a JSON object containing:\n");
         prompt.push_str("- description: A high-level summary of what this change accomplishes\n");
-        prompt.push_str("- file_changes: Array of {path, change_type (create/modify/delete), description}\n");
+        prompt.push_str(
+            "- file_changes: Array of {path, change_type (create/modify/delete), description}\n",
+        );
         prompt.push_str("- expected_behaviors: Array of strings describing testable behaviors\n");
-        prompt.push_str("- acceptance_criteria: Array of specific criteria that tests should verify\n\n");
+        prompt.push_str(
+            "- acceptance_criteria: Array of specific criteria that tests should verify\n\n",
+        );
 
         prompt.push_str("Focus on WHAT should be built, not HOW. The specification should be detailed enough to write tests from.\n\n");
 

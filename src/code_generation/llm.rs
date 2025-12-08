@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use crate::code_generation::llm_logging::LlmLogger;
 use crate::core::config::{LlmConfig, LlmLoggingConfig, ReasoningEffort};
 use crate::core::error::BorgError;
+use crate::providers::ResponseFormat;
 
 /// LLM provider trait
 #[async_trait]
@@ -27,6 +28,19 @@ pub trait LlmProvider: Send + Sync {
         max_tokens: Option<usize>,
         temperature: Option<f32>,
     ) -> Result<String>;
+
+    /// Generate a text completion with structured output format
+    /// Providers that support structured outputs (JSON mode, JSON schema) should override this.
+    /// Default implementation ignores response_format and calls generate().
+    async fn generate_with_format(
+        &self,
+        prompt: &str,
+        max_tokens: Option<usize>,
+        temperature: Option<f32>,
+        _response_format: Option<ResponseFormat>,
+    ) -> Result<String> {
+        self.generate(prompt, max_tokens, temperature).await
+    }
 
     /// Generate a text completion for the given prompt and stream the response to stdout
     async fn generate_streaming(
@@ -76,8 +90,6 @@ impl LlmFactory {
                     Box::new(inner),
                 )))
             }
-
-            "mock" => Ok(Box::new(MockLlmProvider::new(config, logging_config)?)),
 
             // Prefer OpenRouter as a safe default when not pinned (empty/default marker)
             other => {
@@ -135,6 +147,16 @@ impl UnifiedProvidersAdapter {
         max_tokens: Option<usize>,
         temperature: Option<f32>,
     ) -> crate::providers::GenerateRequest {
+        self.build_request_with_format(prompt, max_tokens, temperature, None)
+    }
+
+    fn build_request_with_format(
+        &self,
+        prompt: &str,
+        max_tokens: Option<usize>,
+        temperature: Option<f32>,
+        response_format: Option<ResponseFormat>,
+    ) -> crate::providers::GenerateRequest {
         use crate::providers::{ContentPart, Message, Role};
 
         crate::providers::GenerateRequest {
@@ -155,7 +177,7 @@ impl UnifiedProvidersAdapter {
             stop: None,
             seed: None,
             logit_bias: None,
-            response_format: None,
+            response_format,
             max_output_tokens: max_tokens.or(Some(1024)),
             metadata: self.static_metadata.clone(),
         }
@@ -260,6 +282,33 @@ impl LlmProvider for UnifiedProvidersAdapter {
             .log_response(self.provider_name, &self.model, &final_text, duration)?;
 
         Ok(final_text)
+    }
+
+    async fn generate_with_format(
+        &self,
+        prompt: &str,
+        max_tokens: Option<usize>,
+        temperature: Option<f32>,
+        response_format: Option<ResponseFormat>,
+    ) -> Result<String> {
+        // Structured request logging (redacted)
+        self.logger
+            .log_request(self.provider_name, &self.model, prompt)?;
+
+        let start_time = std::time::Instant::now();
+        let req = self.build_request_with_format(prompt, max_tokens, temperature, response_format);
+
+        let out = self
+            .inner
+            .generate(req)
+            .await
+            .map_err(|e| anyhow::anyhow!(BorgError::LlmApiError(e.to_string())))?;
+
+        let duration = start_time.elapsed().as_millis() as u64;
+        self.logger
+            .log_response(self.provider_name, &self.model, &out.text, duration)?;
+
+        Ok(out.text)
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1885,309 +1934,6 @@ impl LlmProvider for OpenRouterProvider {
 
         self.logger
             .log_response("OpenRouter", &self.model, &content, duration)?;
-
-        Ok(content)
-    }
-}
-/// A mock LLM provider for testing without API keys
-pub struct MockLlmProvider {
-    model: String,
-    logger: Arc<LlmLogger>,
-    // Optional idle-timeouts to mirror other providers; used to drive deterministic timeouts
-    first_token_timeout_ms: Option<u64>,
-    stall_timeout_ms: Option<u64>,
-}
-
-impl MockLlmProvider {
-    /// Create a new mock provider
-    pub fn new(config: LlmConfig, logging_config: LlmLoggingConfig) -> Result<Self> {
-        log::info!("Creating mock LLM provider with model: {}", config.model);
-
-        let logger = Arc::new(LlmLogger::new(logging_config)?);
-
-        Ok(Self {
-            model: config.model,
-            logger,
-            first_token_timeout_ms: config.first_token_timeout_ms,
-            stall_timeout_ms: config.stall_timeout_ms,
-        })
-    }
-
-    /// Generate a mock response based on the code improvement task
-    fn generate_mock_response(&self, prompt: &str) -> String {
-        // Find the task description in the prompt
-        let task = if let Some(start) = prompt.find("## TASK DESCRIPTION:") {
-            if let Some(end_idx) = prompt[start..].find("\n##") {
-                prompt[start + 21..start + end_idx].trim()
-            } else {
-                "Improve code efficiency"
-            }
-        } else {
-            "Improve code efficiency"
-        };
-
-        let file_path = if let Some(start) = prompt.find("## FILES TO MODIFY:") {
-            if let Some(end_idx) = prompt[start..].find("\n##") {
-                let files_section = &prompt[start + 20..start + end_idx];
-                if let Some(file) = files_section.lines().next() {
-                    file.trim()
-                } else {
-                    "src/main.rs"
-                }
-            } else {
-                "src/main.rs"
-            }
-        } else {
-            "src/main.rs"
-        };
-
-        // Generate a placeholder response with a template improvement
-        format!(
-            "I've analyzed the task to '{task}' for file {file_path}.\n\n\
-            ## CODE IMPROVEMENT:\n\
-            ```rust\n\
-            // Improved implementation for {task}\n\
-            pub fn improved_function() {{\n\
-                // More efficient algorithm\n\
-                let result = compute_faster();\n\
-                println!(\"Improved result: {{}}\", result);\n\
-            }}\n\
-            \n\
-            fn compute_faster() -> u64 {{\n\
-                // Use memoization for better performance\n\
-                let cached_result = 42;\n\
-                cached_result\n\
-            }}\n\
-            ```\n\n\
-            ## EXPLANATION:\n\
-            This improvement addresses '{task}' by implementing a more efficient algorithm with memoization, \
-            which reduces redundant calculations and improves overall performance. \
-            The new implementation maintains the same functionality while being more maintainable and faster.\n"
-        )
-    }
-}
-
-#[async_trait]
-impl LlmProvider for MockLlmProvider {
-    async fn generate(
-        &self,
-        prompt: &str,
-        _max_tokens: Option<usize>,
-        _temperature: Option<f32>,
-    ) -> Result<String> {
-        // Log the request
-        self.logger.log_request("Mock", &self.model, prompt)?;
-
-        let start_time = Instant::now();
-
-        // Generate mock response
-        let response = self.generate_mock_response(prompt);
-
-        // Calculate duration (simulate some delay)
-        let duration = start_time.elapsed().as_millis() as u64;
-
-        // Log the response
-        self.logger
-            .log_response("Mock", &self.model, &response, duration)?;
-
-        Ok(response)
-    }
-
-    async fn generate_streaming(
-        &self,
-        prompt: &str,
-        _max_tokens: Option<usize>,
-        _temperature: Option<f32>,
-        print_tokens: bool,
-    ) -> Result<String> {
-        log::info!("Generating streaming mock response for prompt");
-
-        // Log the request
-        self.logger.log_request("Mock", &self.model, prompt)?;
-
-        // Track time for request duration
-        let start_time = Instant::now();
-
-        // Mirror provider idle-timeouts (defaults match other providers)
-        use tokio::time::{sleep, timeout};
-        let first_token_timeout_ms = self.first_token_timeout_ms.unwrap_or(30000);
-        let stall_timeout_ms = self.stall_timeout_ms.unwrap_or(10000);
-
-        // Read environment variables once at the start for deterministic behavior
-        // Safe parsing helpers with defaults
-        fn parse_usize_env(var: &str, default: usize) -> usize {
-            std::env::var(var)
-                .ok()
-                .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or(default)
-        }
-        fn parse_u64_env(var: &str, default: u64) -> u64 {
-            std::env::var(var)
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(default)
-        }
-
-        // Streaming profiles
-        enum Profile {
-            Normal,
-            NoFirstChunk,
-            StallAfterN,
-            ThinkingThenAnswer,
-        }
-
-        let profile = match std::env::var("BORG_MOCK_STREAM_PROFILE")
-            .unwrap_or_else(|_| "normal".to_string())
-            .as_str()
-        {
-            "no_first_chunk" => Profile::NoFirstChunk,
-            "stall_after_n" => Profile::StallAfterN,
-            "thinking_then_answer" => Profile::ThinkingThenAnswer,
-            _ => Profile::Normal,
-        };
-
-        // Controls
-        let stall_after_chunks: usize = parse_usize_env("BORG_MOCK_STALL_AFTER_CHUNKS", 2);
-        let first_chunk_delay_ms: u64 = parse_u64_env("BORG_MOCK_FIRST_CHUNK_DELAY_MS", 0);
-        let inter_chunk_delay_ms: u64 = parse_u64_env("BORG_MOCK_INTER_CHUNK_DELAY_MS", 50);
-        let thinking_tokens: usize = parse_usize_env("BORG_MOCK_THINKING_TOKENS", 5);
-
-        // Build chunks according to profile
-        let answer = self.generate_mock_response(prompt);
-        let mut chunks: Vec<String> = Vec::new();
-
-        match profile {
-            Profile::ThinkingThenAnswer => {
-                // Emit synthetic thinking tokens first
-                for i in 1..=thinking_tokens {
-                    // Trailing space to keep tokens separated in the final buffer
-                    chunks.push(format!("(thinking… chunk {}) ", i));
-                }
-                // Then the normal answer words, one token per word with leading space except the first
-                for (i, w) in answer.split_whitespace().enumerate() {
-                    if i == 0 {
-                        chunks.push(w.to_string());
-                    } else {
-                        chunks.push(format!(" {}", w));
-                    }
-                }
-            }
-            Profile::Normal | Profile::StallAfterN => {
-                for (i, w) in answer.split_whitespace().enumerate() {
-                    if i == 0 {
-                        chunks.push(w.to_string());
-                    } else {
-                        chunks.push(format!(" {}", w));
-                    }
-                }
-            }
-            Profile::NoFirstChunk => {
-                // Intentionally do not prepare any chunks; we'll trigger first-token timeout below
-            }
-        }
-
-        let mut content = String::new();
-        let mut stdout = io::stdout();
-        let mut got_first_chunk = false;
-        let mut emitted_chunks: usize = 0;
-        let mut idx: usize = 0;
-
-        loop {
-            let cur_timeout_ms = if got_first_chunk {
-                stall_timeout_ms
-            } else {
-                first_token_timeout_ms
-            };
-
-            // Construct the "next step" future which either waits and yields a chunk, or stalls to trigger timeout
-            let next_step = async {
-                if !got_first_chunk {
-                    match profile {
-                        Profile::Normal | Profile::ThinkingThenAnswer => {
-                            if first_chunk_delay_ms > 0 {
-                                sleep(Duration::from_millis(first_chunk_delay_ms)).await;
-                            }
-                        }
-                        Profile::NoFirstChunk => {
-                            // Sleep longer than first-token timeout so outer timeout triggers deterministically
-                            sleep(Duration::from_millis(first_token_timeout_ms + 200)).await;
-                            return None::<String>;
-                        }
-                        Profile::StallAfterN => {
-                            // No special initial delay required by spec
-                        }
-                    }
-                } else {
-                    // Inter-chunk pacing for normal progression
-                    sleep(Duration::from_millis(inter_chunk_delay_ms)).await;
-                }
-
-                // If we should stall after N chunks, do so by sleeping longer than stall_timeout
-                if matches!(profile, Profile::StallAfterN)
-                    && got_first_chunk
-                    && emitted_chunks >= stall_after_chunks
-                {
-                    sleep(Duration::from_millis(stall_timeout_ms + 200)).await;
-                    return None::<String>;
-                }
-
-                // Produce the next chunk if any
-                if idx < chunks.len() {
-                    let c = chunks[idx].clone();
-                    idx += 1;
-                    Some(c)
-                } else {
-                    None
-                }
-            };
-
-            match timeout(Duration::from_millis(cur_timeout_ms), next_step).await {
-                Ok(opt_chunk) => {
-                    if let Some(chunk) = opt_chunk {
-                        content.push_str(&chunk);
-                        if print_tokens {
-                            print!("{}", chunk);
-                            let _ = stdout.flush();
-                        }
-                        got_first_chunk = true;
-                        emitted_chunks += 1;
-
-                        if idx >= chunks.len() {
-                            break; // Completed normally
-                        }
-                    } else {
-                        // No more chunks to emit, end of stream
-                        break;
-                    }
-                }
-                Err(_) => {
-                    // Timeout occurred
-                    let msg = if !got_first_chunk {
-                        format!(
-                            "Mock streaming first token timeout after {} ms for model {}. Received {} chars so far.",
-                            cur_timeout_ms, self.model, content.len()
-                        )
-                    } else {
-                        format!(
-                            "Mock streaming stalled after {} ms for model {} with {} chars received.",
-                            cur_timeout_ms, self.model, content.len()
-                        )
-                    };
-                    return Err(anyhow::anyhow!(BorgError::TimeoutError(msg)));
-                }
-            }
-        }
-
-        if print_tokens {
-            println!();
-        } // Ensure a newline at the end
-
-        // Calculate request duration
-        let duration = start_time.elapsed().as_millis() as u64;
-
-        // Log the response
-        self.logger
-            .log_response("Mock", &self.model, &content, duration)?;
 
         Ok(content)
     }

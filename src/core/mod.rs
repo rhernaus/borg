@@ -1,10 +1,7 @@
 pub mod agent;
-pub mod authentication;
 pub mod config;
 pub mod error;
 pub mod ethics;
 pub mod optimization;
-pub mod persistence;
-pub mod planning;
 pub mod strategies;
 pub mod strategy;

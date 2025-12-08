@@ -16,8 +16,6 @@ reqwest = { version = "0.12.23", features = ["json", "stream", "blocking"] }
 # JSON serialization/deserialization
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.143"
-# MongoDB database
-mongodb = "3.3.0"
 # Git operations
 git2 = "0.20.2"
 pathdiff = "0.2.3"
@@ -34,6 +32,7 @@ thiserror = "2.0.16"
 # Configuration
 config = "0.15.15"
 toml = "0.9.5"
+serde_yaml = "0.9"
 # For async operations
 futures = "0.3.31"
 futures-util = "0.3.31"
@@ -46,13 +45,6 @@ chrono = { version = "0.4.42", features = ["serde"] }
 uuid = { version = "1.18.1", features = ["v4"] }
 # Random number generation
 rand = "0.9.2"
-# Password hashing
-bcrypt = "0.17.1"
-# Base64 encoding/decoding
-base64 = "0.22.1"
-# Cryptography
-ring = "0.17.14"
-sha2 = "0.10.8"
 # Directory traversal
 walkdir = "2.5.0"
 

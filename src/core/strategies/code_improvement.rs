@@ -12,7 +12,6 @@ use uuid::Uuid;
 use crate::code_generation::generator::{CodeContext, CodeGenerator, CodeImprovement, FileChange};
 use crate::code_generation::spec_generator::SpecGenerator;
 use crate::code_generation::test_generator::{parse_test_failures, GeneratedTests, TestGenerator};
-use crate::core::authentication::AuthenticationManager;
 use crate::core::optimization::{OptimizationCategory, OptimizationGoal, OptimizationManager};
 use crate::core::strategy::{
     ActionPermission, ActionStep, ActionType, ExecutionResult, PermissionScope, Plan, Strategy,
@@ -56,14 +55,10 @@ pub struct CodeImprovementStrategy {
     #[allow(dead_code)]
     git_manager: Arc<Mutex<dyn GitManager>>,
 
-    /// Authentication manager for permission checks
-    auth_manager: Arc<Mutex<AuthenticationManager>>,
-
     /// Optimization manager for retrieving goals
     optimization_manager: Arc<Mutex<OptimizationManager>>,
 
     // TDD components (optional, for TDD flow)
-
     /// Spec generator for creating specifications from goals
     #[allow(dead_code)]
     spec_generator: Option<Arc<SpecGenerator>>,
@@ -87,7 +82,6 @@ impl CodeImprovementStrategy {
         code_generator: Arc<dyn CodeGenerator>,
         test_runner: Arc<dyn TestRunner>,
         git_manager: Arc<Mutex<dyn GitManager>>,
-        auth_manager: Arc<Mutex<AuthenticationManager>>,
         optimization_manager: Arc<Mutex<OptimizationManager>>,
     ) -> Self {
         Self {
@@ -95,7 +89,6 @@ impl CodeImprovementStrategy {
             code_generator,
             test_runner,
             git_manager,
-            auth_manager,
             optimization_manager,
             spec_generator: None,
             test_generator: None,
@@ -112,7 +105,6 @@ impl CodeImprovementStrategy {
         code_generator: Arc<dyn CodeGenerator>,
         test_runner: Arc<dyn TestRunner>,
         git_manager: Arc<Mutex<dyn GitManager>>,
-        auth_manager: Arc<Mutex<AuthenticationManager>>,
         optimization_manager: Arc<Mutex<OptimizationManager>>,
         spec_generator: Arc<SpecGenerator>,
         test_generator: Arc<TestGenerator>,
@@ -123,7 +115,6 @@ impl CodeImprovementStrategy {
             code_generator,
             test_runner,
             git_manager,
-            auth_manager,
             optimization_manager,
             spec_generator: Some(spec_generator),
             test_generator: Some(test_generator),
@@ -556,11 +547,7 @@ impl CodeImprovementStrategy {
 
     /// Execute a step using TDD flow: spec → tests → implement until pass
     #[allow(dead_code)]
-    async fn execute_step_tdd(
-        &self,
-        plan: &Plan,
-        step_id: &str,
-    ) -> Result<ExecutionResult> {
+    async fn execute_step_tdd(&self, plan: &Plan, step_id: &str) -> Result<ExecutionResult> {
         let step = plan
             .steps
             .iter()
@@ -631,7 +618,10 @@ impl CodeImprovementStrategy {
             generated_tests.test_file_path
         ));
         context.generated_tests = Some(generated_tests.clone());
-        outputs.insert("test_count".to_string(), generated_tests.test_names.len().to_string());
+        outputs.insert(
+            "test_count".to_string(),
+            generated_tests.test_names.len().to_string(),
+        );
 
         // Step 4: Write tests to workspace
         execution_log.push("Writing tests to workspace".to_string());
@@ -1600,34 +1590,14 @@ impl Strategy for CodeImprovementStrategy {
     fn check_permissions(&self, goal: &OptimizationGoal) -> Result<bool> {
         info!("Checking permissions for goal: {}", goal.id);
 
-        // Lock the authentication manager
-        let auth_manager = match self.auth_manager.try_lock() {
-            Ok(manager) => manager,
-            Err(_) => return Err(anyhow!("Failed to acquire authentication manager lock")),
-        };
-
-        // Check if there's an authenticated user
-        if auth_manager.current_user().is_none() {
-            info!(
-                "No authenticated user found, but we're in permissive mode - granting permission"
-            );
-            return Ok(true);
-        }
-
-        // Check if the session is valid - even if not, we'll allow operations
-        if !auth_manager.is_session_valid() {
-            info!("User session expired, but we're in permissive mode - granting permission");
-            return Ok(true);
-        }
-
         // Get the permissions required for this goal (for logging purposes only)
         let required_permissions = self.get_required_permissions_for_goal_internal(goal);
         info!(
-            "Goal requires {} permissions - granting all in permissive mode",
+            "Goal requires {} permissions - granting all (single-user local agent)",
             required_permissions.len()
         );
 
-        // In permissive mode, always grant permission
+        // Single-user local agent, always grant permission
         Ok(true)
     }
 

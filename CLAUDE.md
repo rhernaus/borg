@@ -64,9 +64,9 @@ LLM configuration supports multiple providers with these optional fields:
 
 ## Testing Notes
 
-- Set `BORG_USE_MOCK_LLM=true` to use mock LLM providers instead of real APIs
 - Integration tests create per-test configs with temp workspaces
 - Tests rely on `env!("CARGO_BIN_EXE_borg")` for binary path
+- Tests requiring LLM providers are marked with `#[ignore]` and need real API keys to run
 
 ## Important Implementation Details
 
