@@ -16,12 +16,12 @@ Cargo.lock
 .env
 .env.local
 
-# Configuration with sensitive data
-config.toml            # Legacy TOML config (copy from config.sample.toml)
-config.yaml            # Your config with real API keys (copy from config.sample.yaml)
+# Configuration with sensitive data (copy from config.sample.yaml)
+config.toml
+config.yaml
 config.production.toml
 config.production.yaml
-*.local.toml           # Ignore any local config files
+*.local.toml
 *.local.yaml
 
 # Logs
