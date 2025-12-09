@@ -154,15 +154,20 @@ fn default_logging_enabled() -> bool {
     true
 }
 
-/// Reasoning effort levels for provider-specific reasoning
+/// Reasoning effort levels for provider-specific reasoning (OpenRouter unified interface)
+/// See: https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningEffort {
-    /// Low reasoning effort
+    /// No reasoning (disables reasoning entirely)
+    None,
+    /// Minimal reasoning effort (~10% of max_tokens)
+    Minimal,
+    /// Low reasoning effort (~20% of max_tokens)
     Low,
-    /// Medium reasoning effort
+    /// Medium reasoning effort (~50% of max_tokens)
     Medium,
-    /// High reasoning effort
+    /// High reasoning effort (~80% of max_tokens)
     High,
 }
 

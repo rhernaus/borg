@@ -442,12 +442,21 @@ impl OpenAiProvider {
             "temperature": temperature.unwrap_or(0.7),
         });
 
-        // Reasoning attachments
+        // OpenRouter unified reasoning interface
+        // See: https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
         let model_lower = self.model.to_lowercase();
-        let supports_reasoning = model_lower.starts_with("o3")
+
+        // Models that support reasoning tokens via OpenRouter
+        // - OpenAI o-series: use effort parameter
+        // - Claude: use max_tokens parameter
+        // - DeepSeek, Gemini, Qwen: use max_tokens parameter
+        let supports_reasoning = model_lower.starts_with("o1")
+            || model_lower.starts_with("o3")
             || model_lower.starts_with("o4")
-            || model_lower.contains("o3")
-            || model_lower.contains("o4");
+            || model_lower.contains("claude")
+            || model_lower.contains("deepseek")
+            || model_lower.contains("gemini")
+            || model_lower.contains("qwen");
 
         let should_add_reasoning = self.enable_thinking.unwrap_or(false)
             || self.reasoning_effort.is_some()
@@ -456,8 +465,11 @@ impl OpenAiProvider {
         if supports_reasoning && should_add_reasoning {
             let mut reasoning_obj = serde_json::Map::new();
 
+            // effort: for OpenAI/Grok models
             if let Some(effort) = &self.reasoning_effort {
                 let effort_str = match effort {
+                    ReasoningEffort::None => "none",
+                    ReasoningEffort::Minimal => "minimal",
                     ReasoningEffort::Low => "low",
                     ReasoningEffort::Medium => "medium",
                     ReasoningEffort::High => "high",
@@ -468,9 +480,10 @@ impl OpenAiProvider {
                 );
             }
 
+            // max_tokens: for Anthropic/Gemini/Qwen models (NOT budget_tokens)
             if let Some(budget) = self.reasoning_budget_tokens {
                 reasoning_obj.insert(
-                    "budget_tokens".to_string(),
+                    "max_tokens".to_string(),
                     serde_json::Value::Number(budget.into()),
                 );
             }
@@ -839,12 +852,18 @@ impl OpenAiProvider {
             "stream": true
         });
 
-        // Reasoning attachments
+        // OpenRouter unified reasoning interface
+        // See: https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
         let model_lower = self.model.to_lowercase();
-        let supports_reasoning = model_lower.starts_with("o3")
+
+        // Models that support reasoning tokens via OpenRouter
+        let supports_reasoning = model_lower.starts_with("o1")
+            || model_lower.starts_with("o3")
             || model_lower.starts_with("o4")
-            || model_lower.contains("o3")
-            || model_lower.contains("o4");
+            || model_lower.contains("claude")
+            || model_lower.contains("deepseek")
+            || model_lower.contains("gemini")
+            || model_lower.contains("qwen");
 
         let should_add_reasoning = self.enable_thinking.unwrap_or(false)
             || self.reasoning_effort.is_some()
@@ -853,8 +872,11 @@ impl OpenAiProvider {
         if supports_reasoning && should_add_reasoning {
             let mut reasoning_obj = serde_json::Map::new();
 
+            // effort: for OpenAI/Grok models
             if let Some(effort) = &self.reasoning_effort {
                 let effort_str = match effort {
+                    ReasoningEffort::None => "none",
+                    ReasoningEffort::Minimal => "minimal",
                     ReasoningEffort::Low => "low",
                     ReasoningEffort::Medium => "medium",
                     ReasoningEffort::High => "high",
@@ -865,9 +887,10 @@ impl OpenAiProvider {
                 );
             }
 
+            // max_tokens: for Anthropic/Gemini/Qwen models
             if let Some(budget) = self.reasoning_budget_tokens {
                 reasoning_obj.insert(
-                    "budget_tokens".to_string(),
+                    "max_tokens".to_string(),
                     serde_json::Value::Number(budget.into()),
                 );
             }
@@ -1611,6 +1634,8 @@ impl OpenRouterProvider {
         )
     }
 
+    /// Attach OpenRouter unified reasoning parameters to payload
+    /// See: https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
     fn maybe_attach_reasoning(&self, mut payload: serde_json::Value) -> serde_json::Value {
         let should_add = self.enable_thinking.unwrap_or(false)
             || self.reasoning_effort.is_some()
@@ -1619,8 +1644,11 @@ impl OpenRouterProvider {
         if should_add {
             let mut reasoning_obj = serde_json::Map::new();
 
+            // effort: for OpenAI/Grok models
             if let Some(effort) = &self.reasoning_effort {
                 let effort_str = match effort {
+                    ReasoningEffort::None => "none",
+                    ReasoningEffort::Minimal => "minimal",
                     ReasoningEffort::Low => "low",
                     ReasoningEffort::Medium => "medium",
                     ReasoningEffort::High => "high",
@@ -1631,9 +1659,10 @@ impl OpenRouterProvider {
                 );
             }
 
+            // max_tokens: for Anthropic/Gemini/Qwen models
             if let Some(budget) = self.reasoning_budget_tokens {
                 reasoning_obj.insert(
-                    "budget_tokens".to_string(),
+                    "max_tokens".to_string(),
                     serde_json::Value::Number(budget.into()),
                 );
             }
